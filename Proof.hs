@@ -33,7 +33,6 @@ type HashMap k v = BasicHashTable k v
 
 data ProofBuilder = Builder (HashMap Expression ProofStatement) 
                             (HashMap Expression [ProofStatement])
-                            (Sequence ProofStatement)
 
 newBuilder :: IO ProofBuilder
 newBuilder = do
