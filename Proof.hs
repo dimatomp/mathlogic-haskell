@@ -1,11 +1,12 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
-module Proof (ProofStatement, ProofBuilder, newBuilder, nextSt, findProof, getNumberedProof) where
+module Proof where
 
 import Prelude hiding (lookup)
 
 import Data.HashTable.IO
 import Data.Maybe
+import Data.Sequence
 
 import Control.Monad
 
@@ -32,6 +33,7 @@ type HashMap k v = BasicHashTable k v
 
 data ProofBuilder = Builder (HashMap Expression ProofStatement) 
                             (HashMap Expression [ProofStatement])
+                            (Sequence ProofStatement)
 
 newBuilder :: IO ProofBuilder
 newBuilder = do
@@ -60,12 +62,18 @@ nextSt (Builder proved forMP) expr = do
         _               -> return ()
     where lookupOrEmpty t k = liftM (fromMaybe []) $ lookup t k
 
+addProof :: ProofBuilder -> ProofStatement -> IO ()
+addProof builder stmt = do
+    case stmt of
+        ModusPonens _ left right _ -> addProof builder left >> addProof builder right
+        _ -> return ()
+    nextSt builder $ getExpression stmt
+
 findProof :: ProofBuilder -> Expression -> IO ProofStatement
 findProof (Builder proved _) expr = liftM (fromMaybe $ Unproved expr Nothing) $ lookup proved expr
 
-getNumberedProof :: ProofBuilder -> Expression -> IO [ProofStatement]
-getNumberedProof builder expr = do
-    stmt <- findProof builder expr
+getNumberedProof :: ProofStatement -> IO [ProofStatement]
+getNumberedProof stmt = do
     table <- new :: IO (HashMap Expression ProofStatement)
     let dfs cPos stmt = do
         already <- lookup table $ getExpression stmt

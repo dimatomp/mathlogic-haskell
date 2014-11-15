@@ -70,3 +70,14 @@ parseImpl = (do
 
 parseExpr :: ByteString -> Maybe Expression
 parseExpr s = fmap fst $ runStateT parseImpl s
+
+heading :: Parser ([Expression], Expression)
+heading = do
+    fst <- parseImpl
+    rem <- many $ char ',' >> parseImpl
+    char '|' >> char '-'
+    res <- parseImpl
+    return (fst:rem, res)
+
+parseHead :: ByteString -> Maybe ([Expression], Expression)
+parseHead s = fmap fst $ runStateT heading s
