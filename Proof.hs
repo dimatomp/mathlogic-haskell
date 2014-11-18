@@ -6,7 +6,7 @@ import Prelude hiding (lookup)
 
 import Data.HashTable.IO
 import Data.Maybe
-import Data.Sequence
+import Data.List (find)
 
 import Control.Monad
 
@@ -32,7 +32,7 @@ instance Show ProofStatement where
 type HashMap k v = BasicHashTable k v
 
 data ProofBuilder = Builder (HashMap Expression ProofStatement) 
-                            (HashMap Expression [ProofStatement])
+                                    (HashMap Expression [ProofStatement])
 
 newBuilder :: IO ProofBuilder
 newBuilder = do
@@ -40,36 +40,59 @@ newBuilder = do
     forMP <- new
     return $ Builder proved forMP
 
-nextSt :: ProofBuilder -> Expression -> IO ()
-nextSt (Builder proved forMP) expr = do
+findProof :: ProofBuilder -> Expression -> IO ProofStatement
+findProof (Builder proved _) expr = liftM (fromMaybe $ Unproved expr Nothing) $ lookup proved expr
+
+tryAdd :: ProofBuilder -> Expression -> IO ProofStatement
+tryAdd builder@(Builder proved forMP) expr = do 
     alreadyProved <- lookup proved expr
     let isAxiom = if any (isJust . (`matches` expr)) classicAxioms
         then Just $ Axiom expr Nothing
         else Nothing
-    firstSuccess <- liftM (listToMaybe . catMaybes) $ lookupOrEmpty forMP expr >>= mapM ((lookup proved) . getLeft . getExpression)
+    success <- liftM catMaybes $ lookupOrEmpty forMP expr >>= mapM ((lookup proved) . getLeft . getExpression)
+    let firstSuccess = (find (\x -> case x of Unproved _ _ -> False; _ -> True) success) `mplus` (listToMaybe success)
     modusPonens <- case firstSuccess of
         Nothing -> return Nothing
         Just fromPart -> do
             implPart <- lookup proved $ Implication (getExpression fromPart) expr
             return $ Just $ ModusPonens expr fromPart (fromJust implPart) Nothing
-    let statement = fromMaybe (Unproved expr Nothing) $ alreadyProved `mplus` isAxiom `mplus` modusPonens 
-    insert proved expr statement
+    let priority = case alreadyProved of
+            Just (Unproved _ _) -> isAxiom `mplus` modusPonens `mplus` alreadyProved
+            _ -> alreadyProved `mplus` isAxiom `mplus` modusPonens
+    return $ fromMaybe (Unproved expr Nothing) priority
+    where lookupOrEmpty t k = liftM (fromMaybe []) $ lookup t k
+
+addStatement :: ProofBuilder -> ProofStatement -> IO ProofStatement
+addStatement builder@(Builder proved forMP) stmt = do
+    let expr = getExpression stmt
+    insert proved expr stmt
     case expr of
         Implication l r -> do
             findRight <- lookupOrEmpty forMP r
-            insert forMP r $ statement:findRight
+            insert forMP r $ stmt:findRight
         _               -> return ()
+    findProof builder expr
     where lookupOrEmpty t k = liftM (fromMaybe []) $ lookup t k
+    
+nextSt :: ProofBuilder -> Expression -> IO ProofStatement
+nextSt builder expr = tryAdd builder expr >>= addStatement builder
 
-addProof :: ProofBuilder -> ProofStatement -> IO ()
-addProof builder stmt = do
-    case stmt of
-        ModusPonens _ left right _ -> addProof builder left >> addProof builder right
-        _ -> return ()
-    nextSt builder $ getExpression stmt
+addProof :: ProofBuilder -> ProofStatement -> IO ProofStatement
+addProof builder stmt = case stmt of
+    ModusPonens expr left right _ -> do
+        addNow <- tryAdd builder expr
+        case addNow of
+            Unproved _ _ -> do
+                addProof builder left
+                addProof builder right
+                nextSt builder expr
+            _ -> return addNow
+    _ -> nextSt builder $ getExpression stmt
 
-findProof :: ProofBuilder -> Expression -> IO ProofStatement
-findProof (Builder proved _) expr = liftM (fromMaybe $ Unproved expr Nothing) $ lookup proved expr
+renumber :: ProofStatement -> Int -> ProofStatement
+renumber (Unproved e _) pos = Unproved e $ Just pos
+renumber (Axiom e _) pos = Axiom e $ Just pos
+renumber (ModusPonens e l r _) pos = ModusPonens e l r $ Just pos
 
 getNumberedProof :: ProofStatement -> IO [ProofStatement]
 getNumberedProof stmt = do
@@ -77,7 +100,7 @@ getNumberedProof stmt = do
     let dfs cPos stmt = do
         already <- lookup table $ getExpression stmt
         case already of
-            Just res -> return ([], res)
+            Just res -> return ([], renumber res $ cPos - 1)
             Nothing -> do
                 (list, ret) <- case stmt of
                     Unproved expr _ -> let ret = Unproved expr (Just cPos) in return ([ret], ret)
@@ -90,3 +113,22 @@ getNumberedProof stmt = do
                 insert table (getExpression stmt) ret
                 return (list, ret)
     liftM fst $ dfs 1 stmt
+
+getFixedProof :: ProofBuilder -> [Expression] -> IO [ProofStatement]
+getFixedProof builder list = do
+    table <- new :: IO (HashMap Expression ProofStatement)
+    let addSeq [] = return []
+        addSeq list@(expr:res) = do
+        prevStatements <- addSeq res
+        let stNumber = length list
+            renumber stmt = case stmt of
+                Unproved e _ -> return $ Unproved e $ Just stNumber
+                Axiom a _ -> return $ Axiom a $ Just stNumber
+                ModusPonens e l r _ -> do
+                    leftB <- liftM fromJust $ lookup table $ getExpression l
+                    rightB <- liftM fromJust $ lookup table $ getExpression r
+                    return $ ModusPonens e leftB rightB $ Just stNumber
+        stmt <- findProof builder expr >>= renumber
+        insert table expr stmt
+        return $ stmt:prevStatements
+    liftM reverse $ addSeq $ reverse list

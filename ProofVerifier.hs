@@ -13,7 +13,9 @@ import Data.Maybe
 main = do
     builder <- newBuilder
     [fin, fout] <- getArgs
-    inputData <- liftM (filter (not . null) . splitWith isSpace) $ readFile fin
-    mapM_ (nextSt builder . fromJust . parseExpr) inputData
-    result <- liftM (intercalate "\n" . map show) $ (findProof builder $ fromJust $ parseExpr $ last inputData) >>= getNumberedProof
+    inputData <- liftM (map (fromJust . parseExpr) . filter (not . null) . splitWith isSpace) $ readFile fin
+    mapM_ (nextSt builder) inputData
+    --theProof <- findProof builder $ last inputData
+    --result <- liftM (intercalate "\n" . map show) $ getNumberedProof theProof
+    result <- liftM (intercalate "\n" . map show) $ getFixedProof builder inputData
     writeFile fout $ result ++ "\n"
