@@ -12,7 +12,7 @@ data Expression = Var { getName :: ByteString }
                 deriving Eq
 
 instance Show Expression where
-    show (Gap n) = '$':(show n)
+    show (Gap n) = "[" ++ show n ++ "]"
     show (Var a) = unpack a
     show (Not p) = "!" ++ (case p of
         Var a -> show p
