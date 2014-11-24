@@ -1,7 +1,8 @@
 module Expression where
 
+import Data.Maybe
 import Data.Hashable
-import Data.ByteString.Char8
+import Data.ByteString.Char8 hiding (all)
 
 data Expression = Var { getName :: ByteString }
                 | Gap { getNumber :: Int }
@@ -63,24 +64,30 @@ fillInGaps (Implication left right) list = (fillInGaps left list) --> (fillInGap
 fillInGaps (Not par) list = Not $ fillInGaps par list
 fillInGaps (Gap i) list = list !! i
 
-merge :: Maybe [Expression] -> Maybe [Expression] -> Maybe [Expression]
-merge (Just (s1:f1)) (Just (s2:f2)) =
-    let theRest = merge (Just f1) (Just f2) in case theRest of
-        Nothing -> Nothing
-        Just f  -> case s1 of
-            Gap _ -> Just (s2:f)
-            _     -> case s2 of
-                Gap n -> Just (s1:f)
-                _     -> if s1 == s2 then Just (s1:f) else Nothing
+merge :: Maybe [Maybe Expression] -> Maybe [Maybe Expression] -> Maybe [Maybe Expression]
+merge (Just (s1:f1)) (Just (s2:f2)) = do
+    f <- merge (Just f1) (Just f2)
+    case s1 of
+        Nothing -> return (s2:f)
+        _       -> case s2 of
+            Nothing -> return (s1:f)
+            _       -> if s1 == s2 then return (s1:f) else Nothing
 merge (Just []) (Just res) = Just res
 merge (Just res) (Just []) = Just res
 merge _ _ = Nothing
- 
+
+matchesMaybe :: Expression -> Expression -> Maybe [Maybe Expression]
+matchesMaybe ra@(Var a) rb@(Var b) = merge (Just [Just ra]) (Just [Just rb])
+matchesMaybe (And l1 r1) (And l2 r2) = merge (matchesMaybe l1 l2) (matchesMaybe r1 r2)
+matchesMaybe (Or l1 r1) (Or l2 r2) = merge (matchesMaybe l1 l2) (matchesMaybe r1 r2)
+matchesMaybe (Implication l1 r1) (Implication l2 r2) = merge (matchesMaybe l1 l2) (matchesMaybe r1 r2)
+matchesMaybe (Not p1) (Not p2) = matchesMaybe p1 p2
+matchesMaybe (Gap n) res = Just [if i < n then Nothing else Just res | i <- [0..n]]
+matchesMaybe _ _ = Nothing
+
 matches :: Expression -> Expression -> Maybe [Expression]
-matches ra@(Var a) rb@(Var b) = merge (Just [ra]) (Just [rb])
-matches (And l1 r1) (And l2 r2) = merge (matches l1 l2) (matches r1 r2)
-matches (Or l1 r1) (Or l2 r2) = merge (matches l1 l2) (matches r1 r2)
-matches (Implication l1 r1) (Implication l2 r2) = merge (matches l1 l2) (matches r1 r2)
-matches (Not p1) (Not p2) = matches p1 p2
-matches (Gap n) res = Just [if i < n then Gap i else res | i <- [0..n]]
-matches _ _ = Nothing
+matches e1 e2 = do
+    res <- matchesMaybe e1 e2
+    if all isJust res
+        then return $ catMaybes res
+        else Nothing

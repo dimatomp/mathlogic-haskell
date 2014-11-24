@@ -1,10 +1,10 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
-import Prelude hiding (readFile, lines, null)
+import Prelude hiding (readFile, null)
 
-import Data.List hiding (lines, null)
+import Data.List hiding (null)
 import Data.Char
-import Data.ByteString.Char8 hiding (last, writeFile, map, intercalate, filter)
+import Data.ByteString.Char8 (readFile, splitWith, null)
 import Data.Maybe
 
 import System.Environment
@@ -12,17 +12,11 @@ import System.Environment
 import Control.Monad
 import Control.Monad.ST
 
-import Expression
 import ExpressionParser
-import Proof
-
-buildProof :: [Expression] -> String
-buildProof exprs = runST $ do
-    builder <- newBuilder
-    mapM_ (nextSt builder) exprs
-    liftM (intercalate "\n" . map show) $ getFixedProof builder exprs
+import MonadProof
 
 main = do
     [fin, fout] <- getArgs
     inputData <- liftM (map (fromJust . parseExpr) . filter (not . null) . splitWith isSpace) $ readFile fin
-    writeFile fout $ (buildProof inputData) ++ "\n"
+    let output = runST $ getFixed $ forM inputData tellEx
+    writeFile fout $ (intercalate "\n" $ map show output) ++ "\n"

@@ -61,7 +61,7 @@ tryAdd builder@(Builder proved forMP) expr = do
     return $ fromMaybe (Unproved expr Nothing) priority
     where lookupOrEmpty t k = liftM (fromMaybe []) $ lookup t k
 
-addStatement :: ProofBuilder s -> ProofStatement -> ST s ProofStatement
+addStatement :: ProofBuilder s -> ProofStatement -> ST s (ProofBuilder s)
 addStatement builder@(Builder proved forMP) stmt = do
     let expr = getExpression stmt
     insert proved expr stmt
@@ -70,13 +70,13 @@ addStatement builder@(Builder proved forMP) stmt = do
             findRight <- lookupOrEmpty forMP r
             insert forMP r $ stmt:findRight
         _               -> return ()
-    findProof builder expr
+    return builder
     where lookupOrEmpty t k = liftM (fromMaybe []) $ lookup t k
     
-nextSt :: ProofBuilder s -> Expression -> ST s ProofStatement
+nextSt :: ProofBuilder s -> Expression -> ST s (ProofBuilder s)
 nextSt builder expr = tryAdd builder expr >>= addStatement builder
 
-addProof :: ProofBuilder s -> ProofStatement -> ST s ProofStatement
+addProof :: ProofBuilder s -> ProofStatement -> ST s (ProofBuilder s)
 addProof builder stmt = case stmt of
     ModusPonens expr left right _ -> do
         addNow <- tryAdd builder expr
@@ -85,7 +85,7 @@ addProof builder stmt = case stmt of
                 addProof builder left
                 addProof builder right
                 nextSt builder expr
-            _ -> return addNow
+            _ -> return builder
     _ -> nextSt builder $ getExpression stmt
 
 renumber :: ProofStatement -> Int -> ProofStatement
@@ -132,4 +132,4 @@ getFixedProof builder list = do
             stmt <- findProof builder expr >>= renumber
             insert table expr stmt
             return $ stmt:prevStatements
-    liftM reverse $ addSeq $ reverse list 
+    liftM reverse $ addSeq list 
