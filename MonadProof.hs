@@ -13,12 +13,14 @@ import Control.Monad.ST
 import Control.Monad.Identity
 import Control.Monad.Writer hiding (getLast)
 
-data ProofContainer s = Cached (ST s ([ProofStatement], ProofBuilder s))
-                      | Plain [ProofStatement]
+newtype ProofContainer = ProofContainer { runContainer :: [ProofStatement] }
 
-getCached :: ProofContainer s -> ProofContainer s
-getCached res@(Cached _) = res
-getCached (Plain origList) =
+instance Monoid ProofContainer where
+    mempty = ProofContainer []
+    mappend a b = ProofContainer $ runContainer b ++ runContainer a
+
+getCached :: ProofContainer -> ST s ([ProofStatement], ProofBuilder s)
+getCached (ProofContainer origList) =
     let extract res@(Unproved _ _) = [res]
         extract res@(Axiom _ _) = [res]
         extract res@(ModusPonens _ l r _) = res : (extract r ++ extract l)
@@ -31,49 +33,34 @@ getCached (Plain origList) =
             else f:(removeDuplicates $ s:suf)
 
         list = removeDuplicates $ concatMap extract origList
-        builderST = do
-            builder <- newBuilder
-            builder <- foldM nextSt builder $ map getExpression $ reverse list
-            stmts <- mapM (findProof builder . getExpression) list
-            return (stmts, builder)
-    in Cached builderST
+    in do
+        builder <- newBuilder
+        builder <- foldM nextSt builder $ map getExpression $ reverse list
+        stmts <- mapM (findProof builder . getExpression) list
+        return (stmts, builder)
 
-instance Monoid (ProofContainer s) where
-    mempty = Plain []
-    mappend (Plain list) (Plain list2) = Plain (list2 ++ list)
-    mappend src@(Plain _) plus@(Cached _) = mappend (getCached src) plus
-    mappend (Cached builder) plus = 
-        let builderST = do
-            (oldList, oldBuilder) <- builder
-            newList <- case plus of
-                Plain list -> return list
-                Cached cont -> liftM fst cont
-            builder <- foldM addProof oldBuilder $ reverse newList
-            newList <- mapM (findProof builder . getExpression) newList
-            return (newList ++ oldList, builder)
-        in Cached builderST
+type Proof a = Writer ProofContainer a
+type ProofT m a = WriterT ProofContainer m a
 
--- TODO Support monad transformers
+tellSt :: Monad m => ProofStatement -> ProofT m ()
+tellSt stmt = tell $ ProofContainer [stmt]
 
-type Proof s a = Writer (ProofContainer s) a
-
-tellSt :: ProofStatement -> Proof s ()
-tellSt stmt = tell $ Plain [stmt]
-
-tellEx :: Expression -> Proof s ()
+tellEx :: Monad m => Expression -> ProofT m ()
 tellEx expr = tellSt $ Unproved expr Nothing
 
-getFixed :: Proof s a -> ST s [ProofStatement]
-getFixed (WriterT m) = let cont = snd $ runIdentity m in case cont of
-    Plain _ -> getFixed $ tell $ getCached cont
-    Cached builder -> do
-        (stmts, builder) <- builder
-        getFixedProof builder $ map getExpression stmts
+getFixedM :: Monad m => ProofT m a -> m [ProofStatement]
+getFixedM (WriterT m) = m >>= \(_, cont) -> return $ runST $ do
+    (stmts, builder) <- getCached cont
+    getFixedProof builder $ map getExpression stmts
 
-getLast :: Proof s a -> ST s ProofStatement
-getLast (WriterT m) = let cont = snd $ runIdentity m in case cont of
-    Plain _ -> getLast $ tell $ getCached cont
-    Cached stmt -> liftM (head . fst) stmt
+getLastM :: Monad m => ProofT m a -> m ProofStatement
+getLastM (WriterT m) = m >>= \(_, cont) -> return $ runST $ do
+    (stmts, _) <- getCached cont
+    return $ head stmts
 
-getMinimal :: Proof s a -> ST s [ProofStatement]
-getMinimal proof = liftM getNumberedProof $ getLast proof
+getMinimalM :: Monad m => ProofT m a -> m [ProofStatement]
+getMinimalM proof = liftM getNumberedProof $ getLastM proof
+
+getFixed = runIdentity . getFixedM
+getLast = runIdentity . getLastM
+getMinimal = runIdentity . getMinimalM

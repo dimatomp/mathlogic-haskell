@@ -10,7 +10,6 @@ import Data.Maybe
 import System.Environment
 
 import Control.Monad
-import Control.Monad.ST
 
 import ExpressionParser
 import MonadProof
@@ -18,5 +17,5 @@ import MonadProof
 main = do
     [fin, fout] <- getArgs
     inputData <- liftM (map (fromJust . parseExpr) . filter (not . null) . splitWith isSpace) $ readFile fin
-    let output = runST $ getFixed $ forM inputData tellEx
+    let output = getFixed $ forM inputData tellEx
     writeFile fout $ (intercalate "\n" $ map show output) ++ "\n"
