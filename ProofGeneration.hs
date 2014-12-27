@@ -4,8 +4,11 @@ import Expression hiding (merge)
 import Proof
 import MonadProof
 
+import Data.List
 import Data.Maybe
 import Data.ByteString.Char8 (ByteString)
+
+import Debug.Trace
 
 import Control.Monad
 import Control.Monad.ST
@@ -50,16 +53,16 @@ dfs stmt expr = case stmt of
         tellSt $ fillProof proofAG [expr, getExpression left, getRight $ getExpression right]
 
 applyDeductionPreserve :: [ProofStatement] -> Expression -> [ProofStatement]
-applyDeductionPreserve list expr = getFixed $ forM list (`dfs` expr) 
+applyDeductionPreserve list expr = getFixed $ forM list (`dfs` expr)
 
 applyDeduction :: Expression -> ProofStatement -> ProofStatement
 applyDeduction expr res = getLast $ dfs res expr
 
 contraposition = applyDeduction (a --> b) $ applyDeduction (Not b) $ getLast $ do
-    tellEx $ a --> b 
+    tellEx $ a --> b
     tellEx $ Not b
     tellSt $ fillProof proofBA [a, Not b]
-    tellEx $ (a --> b) --> (a --> Not b) --> Not a 
+    tellEx $ (a --> b) --> (a --> Not b) --> Not a
     tellEx $ (a --> Not b) --> Not a
     tellEx $ Not a
 
@@ -71,16 +74,16 @@ deMorganOr = applyDeduction (Not (a ||| b)) $ getLast $ do
     tellEx $ (a --> Not (a ||| b)) --> Not a
     tellEx $ Not a
     tellEx $ b --> a ||| b
-    tellSt $ fillProof proofBA [b, Not (a ||| b)] 
+    tellSt $ fillProof proofBA [b, Not (a ||| b)]
     tellEx $ (b --> a ||| b) --> (b --> Not (a ||| b)) --> Not b
-    tellEx $ (b --> Not (a ||| b)) --> Not b 
-    tellEx $ Not b 
+    tellEx $ (b --> Not (a ||| b)) --> Not b
+    tellEx $ Not b
     tellEx $ Not a --> Not b --> Not a &&& Not b
-    tellEx $ Not b --> Not a &&& Not b 
-    tellEx $ Not a &&& Not b 
+    tellEx $ Not b --> Not a &&& Not b
+    tellEx $ Not a &&& Not b
 
 aOrNotA = getLast $ do
-    tellSt $ fillProof deMorganOr [a, Not a] 
+    tellSt $ fillProof deMorganOr [a, Not a]
     tellEx $ Not a &&& Not (Not a) --> Not a
     tellSt $ fillProof proofBA [Not (a ||| Not a), Not a &&& Not (Not a) --> Not a]
     tellSt $ fillProof proofAG [Not (a ||| Not a), Not a &&& Not (Not a), Not a]
@@ -96,7 +99,7 @@ aOrNotA = getLast $ do
 
 implicationIsOr = applyDeduction (a --> b) $ getLast $ do
     tellEx $ a --> b
-    tellSt $ contraposition 
+    tellSt $ contraposition
     tellEx $ Not b --> Not a
     tellEx $ Not a --> Not a ||| b
     tellEx $ b --> Not a ||| b
@@ -122,11 +125,11 @@ deMorganAnd = applyDeduction (Not (a &&& b)) $ getLast $ do
         tellEx $ Not b
     tellEx $ Not a --> Not a ||| Not b
     tellEx $ Not b --> Not a ||| Not b
-    tellSt $ fillProof proofBA [a, Not b --> Not a ||| Not b] 
-    tellSt $ fillProof proofAG [a, Not b, Not a ||| Not b] 
+    tellSt $ fillProof proofBA [a, Not b --> Not a ||| Not b]
+    tellSt $ fillProof proofAG [a, Not b, Not a ||| Not b]
     tellEx $ (a --> Not a ||| Not b) --> (Not a --> Not a ||| Not b) --> a ||| Not a --> Not a ||| Not b
     tellEx $ (Not a --> Not a ||| Not b) --> a ||| Not a --> Not a ||| Not b
-    tellEx $ a ||| Not a --> Not a ||| Not b 
+    tellEx $ a ||| Not a --> Not a ||| Not b
     tellSt $ aOrNotA
     tellEx $ Not a ||| Not b
 
@@ -144,7 +147,7 @@ intuitionist = applyDeduction (Not a) $ applyDeduction a $ getLast $ do
 notImplIsAnd = applyDeduction (Not (a --> b)) $ getLast $ do
     tellEx $ Not (a --> b)
     tellSt $ fillProof proofBA [Not a, Not (a --> b)]
-    tellSt $ intuitionist 
+    tellSt $ intuitionist
     tellEx $ (Not a --> a --> b) --> (Not a --> Not (a --> b)) --> Not (Not a)
     tellEx $ (Not a --> Not (a --> b)) --> Not (Not a)
     tellEx $ Not (Not a)
@@ -167,8 +170,8 @@ inMorganOr = getLast $ do
         tellEx $ (a &&& b --> wa) --> (a &&& b --> Not wa) --> Not (a &&& b)
         tellEx $ (a &&& b --> Not wa) --> Not (a &&& b)
         tellEx $ Not (a &&& b)
-    tellSt $ notAIsNotAnd a 
-    tellSt $ notAIsNotAnd b 
+    tellSt $ notAIsNotAnd a
+    tellSt $ notAIsNotAnd b
     tellEx $ (Not a --> Not (a &&& b)) --> (Not b --> Not (a &&& b)) --> (Not a ||| Not b --> Not (a &&& b))
     tellEx $ (Not b --> Not (a &&& b)) --> (Not a ||| Not b --> Not (a &&& b))
     tellEx $ Not a ||| Not b --> Not (a &&& b)
@@ -239,13 +242,21 @@ notAndIsImpl = applyDeduction (a &&& Not b) $ getLast $ do
     tellEx $ ((a --> b) --> Not b) --> Not (a --> b)
     tellEx $ Not (a --> b)
 
-notAndIsImpl = getLast $ do
-    tellSt $ fillProof contraposition [Not (a --> b), a &&& Not b]
-    tellSt $ notImplIsAnd
-    tellEx $ Not (a &&& Not b) --> Not (Not (a --> b))
-    tellEx $ Not (Not (a --> b)) --> a --> b
-    tellSt $ fillProof proofBA [Not (a &&& Not b), Not (Not (a --> b)) --> a --> b]
-    tellSt $ fillProof proofAG [Not (a &&& Not b), Not (Not (a --> b)), a --> b]
+notAThenBIsOr = getLast $ do
+    tellSt $ fillProof contraposition [Not (a ||| b), Not (Not a --> b)]
+    tellSt $ applyDeduction (Not (a ||| b)) $ getLast $ do
+        tellEx $ Not (a ||| b)
+        tellSt $ deMorganOr
+        tellEx $ Not a &&& Not b
+        tellSt $ fillProof notAndIsImpl [Not a, b]
+        tellEx $ Not (Not a --> b)
+    tellEx $ Not (Not (Not a --> b)) --> Not (Not (a ||| b))
+    tellSt $ fillProof addNotNot [Not a --> b]
+    tellSt $ fillProof proofBA [Not a --> b, Not (Not (Not a --> b)) --> Not (Not (a ||| b))]
+    tellSt $ fillProof proofAG [Not a --> b, Not (Not (Not a --> b)), Not (Not (a ||| b))]
+    tellEx $ Not (Not (a ||| b)) --> a ||| b
+    tellSt $ fillProof proofBA [Not a --> b, Not (Not (a ||| b)) --> a ||| b]
+    tellSt $ fillProof proofAG [Not a --> b, Not (Not (a ||| b)), a ||| b]
 
 proveStmt :: Monad m => Expression -> ProofT m ()
 proveStmt toBeProved@(Implication left right) = case left of
@@ -258,14 +269,13 @@ proveStmt toBeProved@(Implication left right) = case left of
         tellSt $ fillProof proofBA [left, andR --> right]
         tellSt $ fillProof proofAG [left, andR, right]
     Or orL orR -> do
-        -- FIXME One of them may just not be true
+        -- FIXME Something from the left may be always false
         proveStmt $ orL --> right
         proveStmt $ orR --> right
         tellEx $ (orL --> right) --> (orR --> right) --> orL ||| orR --> right
         tellEx $ (orR --> right) --> orL ||| orR --> right
         tellEx $ orL ||| orR --> right
     Implication implL implR -> do
-        -- FIXME Referencing to or
         tellSt $ fillProof implicationIsOr [implL, implR]
         proveStmt $ Not implL ||| implR --> right
         tellSt $ fillProof proofBA [left, Not implL ||| implR --> right]
@@ -285,21 +295,15 @@ proveStmt toBeProved@(Implication left right) = case left of
         proveStmt $ implL &&& Not implR --> right
         tellSt $ fillProof proofBA [left, implL &&& Not implR --> right]
         tellSt $ fillProof proofAG [left, implL &&& Not implR, right]
-    Not (Not p) -> do   
+    Not (Not p) -> do
         tellEx $ Not (Not p) --> p
         proveStmt $ p --> right
         tellSt $ fillProof proofBA [Not (Not p), p --> right]
         tellSt $ fillProof proofAG [Not (Not p), p, right]
-    Not p -> do
-        proveStmt $ Not right --> p
-        tellSt $ fillProof contraposition [Not right, p]
-        tellEx $ Not p --> Not (Not right)
-        tellEx $ Not (Not right) --> right
-        tellSt $ fillProof proofBA [Not p, Not (Not right) --> right]
-        tellEx $ fillProof proofAG [Not p, Not (Not right), right]
     _ -> tellSt $ applyDeduction left $ getLast $ do
+        -- TODO And how about Not?
         tellEx left
-        proveStmt right 
+        proveStmt right
 proveStmt toBeProved@(And left right) = do
     tellEx $ left
     tellEx $ right
@@ -307,11 +311,8 @@ proveStmt toBeProved@(And left right) = do
     tellEx $ right --> left &&& right
     tellEx $ toBeProved
 proveStmt toBeProved@(Or left right) = do
-    -- FIXME Should appeal to implication
-    tellEx $ left
-    tellEx $ right
-    tellEx $ left --> left ||| right
-    tellEx $ right --> left ||| right
+    proveStmt $ Not left --> right
+    tellSt $ fillProof notAThenBIsOr [left, right]
     tellEx $ toBeProved
 proveStmt toBeProved@(Not param) = case param of
     And andL andR -> do
@@ -333,19 +334,18 @@ proveStmt toBeProved@(Not param) = case param of
     _ -> tellEx toBeProved
 proveStmt toBeProved = tellEx toBeProved
 
-findUnproved :: ProofStatement -> Bool
-findUnproved (Axiom _ _) = False
-findUnproved (ModusPonens _ l r _ ) = findUnproved l || findUnproved r
-findUnproved (Unproved expr _) = True
+findUnproved :: ProofStatement -> Maybe ProofStatement
+findUnproved (Axiom _ _) = Nothing
+findUnproved (ModusPonens _ l r _ ) = findUnproved l `mplus` findUnproved r
+findUnproved res@(Unproved expr _) = Just res
 
 traceExpr :: Expression -> Maybe [(ByteString, Bool)]
-traceExpr expr = 
+traceExpr expr =
     let gather (Var s) = [s]
         gather (Not p) = gather p
-        gather (And l r) = removeDup $ gather l ++ gather r
-        gather (Or l r) = removeDup $ gather l ++ gather r
-        gather (Implication l r) = removeDup $ gather l ++ gather r
-        removeDup l = foldr (\s l -> if s `elem` l then l else s:l) [] l
+        gather (And l r) = union (gather l) (gather r)
+        gather (Or l r) = union (gather l) (gather r)
+        gather (Implication l r) = union (gather l) (gather r)
 
         check (Var s) list b = b == (fromJust $ lookup s list)
         check (Not p) list b = check p list $ not b
@@ -355,7 +355,7 @@ traceExpr expr =
         check (Or l r) list False = check l list False && check r list False
         check (Implication l r) list True = check l list False || check r list True
         check (Implication l r) list False = check l list True && check r list  False
-        
+
         findValues [] expr list = guard (check expr list False) >> return list
         findValues (f:s) expr list = findValues s expr ((f, False):list) `mplus` findValues s expr ((f, True):list)
-    in findValues (removeDup $ gather expr) expr []
+    in findValues (gather expr) expr []

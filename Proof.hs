@@ -24,13 +24,13 @@ instance Show ProofStatement where
     show (Axiom expr Nothing) = show expr ++ " (Сх. акс. " ++ show (1 + (length $ takeWhile isNothing $ map (`matches` expr) classicAxioms)) ++ ")"
     show (Axiom expr (Just num)) = "(" ++ show num ++ ") " ++ show (Axiom expr Nothing)
     show (ModusPonens expr from impl Nothing) = show expr ++ " (M.P. " ++ unwrap from ++ ", " ++ unwrap impl ++ ")"
-        where 
+        where
             unwrap stmt = case getNum stmt of
                 Nothing  -> "?"
                 Just num -> show num
     show (ModusPonens expr from impl (Just num)) = "(" ++ show num ++ ") " ++ show (ModusPonens expr from impl Nothing)
 
-data ProofBuilder s = Builder (HashTable s Expression ProofStatement) 
+data ProofBuilder s = Builder (HashTable s Expression ProofStatement)
                               (HashTable s Expression [ProofStatement])
 
 newBuilder :: ST s (ProofBuilder s)
@@ -43,7 +43,7 @@ findProof :: ProofBuilder s -> Expression -> ST s ProofStatement
 findProof (Builder proved _) expr = liftM (fromMaybe (Unproved expr Nothing)) $ lookup proved expr
 
 tryAdd :: ProofBuilder s -> Expression -> ST s ProofStatement
-tryAdd builder@(Builder proved forMP) expr = do 
+tryAdd builder@(Builder proved forMP) expr = do
     alreadyProved <- lookup proved expr
     let isAxiom = if any (isJust . (`matches` expr)) classicAxioms
         then Just $ Axiom expr Nothing
@@ -72,7 +72,7 @@ addStatement builder@(Builder proved forMP) stmt = do
         _               -> return ()
     return builder
     where lookupOrEmpty t k = liftM (fromMaybe []) $ lookup t k
-    
+
 nextSt :: ProofBuilder s -> Expression -> ST s (ProofBuilder s)
 nextSt builder expr = tryAdd builder expr >>= addStatement builder
 
@@ -132,4 +132,4 @@ getFixedProof builder list = do
             stmt <- findProof builder expr >>= renumber
             insert table expr stmt
             return $ stmt:prevStatements
-    liftM reverse $ addSeq list 
+    liftM reverse $ addSeq list
