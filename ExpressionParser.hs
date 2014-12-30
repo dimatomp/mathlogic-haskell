@@ -52,21 +52,26 @@ parseNot = (do
     par <- parseNot
     return $ Not par) `mplus` varName
 
-parseAnd = (do
+parseAnd = do
     left <- parseNot
-    right <- once $ char '&' >> parseNot
-    return $ foldl (&&&) left right) `mplus` parseNot
+    (do
+        right <- once $ char '&' >> parseNot
+        return $ foldl (&&&) left right
+        ) `mplus` return left
 
-parseOr = (do
+parseOr = do
     left <- parseAnd
-    right <- once $ char '|' >> parseAnd
-    return $ foldl (|||) left right) `mplus` parseAnd
+    (do
+        right <- once $ char '|' >> parseAnd
+        return $ foldl (|||) left right
+        ) `mplus` return left
 
-parseImpl = (do
+parseImpl = do
     left <- parseOr
-    char '-' >> char '>'
-    right <- parseImpl
-    return $ left --> right) `mplus` parseOr
+    (do
+        right <- char '-' >> char '>' >> parseImpl
+        return $ left --> right
+        ) `mplus` return left
 
 parseExpr :: ByteString -> Maybe Expression
 parseExpr s = fmap fst $ runStateT parseImpl s
