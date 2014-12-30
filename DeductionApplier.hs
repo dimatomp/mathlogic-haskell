@@ -18,6 +18,9 @@ import ProofUtils
 
 main = do
     [fin, fout] <- getArgs
-    inputData <- liftM (map (fromJust . parseExpr) . filter (not . null) . splitWith isSpace) $ readFile fin
-    let output = getLoggedProof $ runST $ getLog $ liftM last $ forM inputData tellEx
+    heading:body <- liftM (filter (not . null) . splitWith isSpace) $ readFile fin
+    let Just (supp, _) = parseHead heading
+        assumeAll = foldr (\s f -> assume s . f) id supp
+        inputData = map (fromJust . parseExpr) body
+        output = getLoggedProof $ runST $ getLog $ liftM last $ assumeAll $ forM inputData tellEx
     writeFile fout $ concatMap (++ "\n") $ map show output

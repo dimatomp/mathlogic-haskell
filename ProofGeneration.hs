@@ -134,6 +134,7 @@ notImplIsAnd a b = assume (Not (a --> b)) $ do
 
 inMorganOr a b = do
     forM_ [a, b] $ \wa -> assume (Not wa) $ do
+        tellEx $ Not wa
         tellEx $ a &&& b --> wa
         proveBA (a &&& b) (Not wa)
         tellEx $ (a &&& b --> wa) --> (a &&& b --> Not wa) --> Not (a &&& b)
@@ -265,18 +266,18 @@ proveStmt toBeProved@(Implication left right) = trace (show toBeProved) $ case l
         proveStmt $ p --> right
         proveBA (Not (Not p)) (p --> right)
         proveAG (Not (Not p)) p right
-    Not p -> trace ("Assume " ++ show left) $ assume left $ (do
-                 tellEx $ p
-                 intuitionist p right
-                 tellEx $ p --> right
-                 tellEx $ right
-                 ) `mplus` proveStmt right
-    p -> trace ("Assume " ++ show left) $ assume left $ (do
+    Not p -> trace ("Assume " ++ show left) $ assume left $ tellEx left >> ((do
+                tellEx $ p
+                intuitionist p right
+                tellEx $ p --> right
+                tellEx $ right
+                ) `mplus` proveStmt right)
+    p -> trace ("Assume " ++ show left) $ assume left $ tellEx left >> ((do
              tellEx $ Not p
              intuitionist p right
              tellEx $ p --> right
              tellEx right
-             ) `mplus` proveStmt right
+             ) `mplus` proveStmt right)
 proveStmt toBeProved@(And left right) = trace (show toBeProved) $ do
     tellEx $ left
     tellEx $ right

@@ -17,15 +17,18 @@ import Control.Monad.Trans.Cont
 
 import Data.HashTable.ST.Basic
 
-data NumberedStatement = NumAxiom Expression Int
+data NumberedStatement = NumUnproved Expression Int
+                       | NumAxiom Expression Int
                        | NumModusPonens Expression Int Int Int
 
+getNumber (NumUnproved _ num) = num
 getNumber (NumAxiom _ num) = num
 getNumber (NumModusPonens _ _ _ num) = num
 
 showPref expr num = "(" ++ show num ++ ") " ++ show expr ++ " "
 
 instance Show NumberedStatement where
+    show (NumUnproved expr num) = showPref expr num ++ "(Не доказано)"
     show (NumAxiom expr num) = showPref expr num ++ "(Сх. акс. " ++ show (fromJust $ getClassicAxiom expr) ++ ")"
     show (NumModusPonens expr l r num) = showPref expr num ++ "(M.P. " ++ show l ++ ", " ++ show r ++ ")"
 
@@ -49,3 +52,15 @@ getNumberedProof stmt = runST $ do
             else return ([], num)
     result <- runContT (dfs stmt 1) $ return . fst
     return $ reverse result
+
+getLoggedProof :: [Either Expression ProofStatement] -> [NumberedStatement]
+getLoggedProof list = runST $ do
+    table <- new :: ST s (HashTable s Expression Int)
+    forM (zip [1 .. length list] list) $ \(num, result) -> case result of
+        Left expr -> insert table expr num >> return (NumUnproved expr num)
+        Right (Axiom expr) -> insert table expr num >> return (NumAxiom expr num)
+        Right (ModusPonens expr left right) -> do
+            Just nLeft <- lookup table $ getExpression left
+            Just nRight <- lookup table $ getExpression right
+            insert table expr num
+            return $ NumModusPonens expr nLeft nRight num

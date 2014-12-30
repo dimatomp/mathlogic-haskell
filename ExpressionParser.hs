@@ -14,7 +14,7 @@ import Expression
 type Parser = StateT ByteString Maybe
 
 allowChars :: (Char -> Bool) -> Parser ByteString
-allowChars pred = StateT $ \str -> 
+allowChars pred = StateT $ \str ->
     let (pref, suf) = span pred str
     in if null pref
         then mzero
@@ -40,7 +40,7 @@ once prs = do
 parseImpl :: Parser Expression
 
 brackets = do
-    char '(' 
+    char '('
     res <- parseImpl
     char ')'
     return res
@@ -48,7 +48,7 @@ brackets = do
 varName = (fmap Var $ allowChars isAlphaNum) `mplus` brackets
 
 parseNot = (do
-    char '!' 
+    char '!'
     par <- parseNot
     return $ Not par) `mplus` varName
 

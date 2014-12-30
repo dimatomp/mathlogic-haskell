@@ -1,6 +1,6 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
-module Proof (getProof, Proof, tellEx, assume, ProofStatement(..)) where
+module Proof (execProof, getProof, getLog, Proof, tellEx, assume, ProofStatement(..)) where
 
 import Prelude hiding (lookup)
 
@@ -14,6 +14,7 @@ import Control.Monad.Trans
 import Control.Monad.Trans.State
 import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.List
+import Control.Monad.Trans.Writer
 
 import Expression
 import Axioms (getClassicAxiom)
@@ -28,30 +29,31 @@ instance Show ProofStatement where
 data ProofBuilder s = Root (HashTable s Expression ProofStatement) (HashTable s Expression [ProofStatement])
                     | Supposition Expression (HashTable s Expression ()) (HashTable s Expression [Expression])
 
-tellRec :: [ProofBuilder s] -> Expression -> MaybeT (ST s) ProofStatement
-tellRec [Root proved forMP] expr = mplus (MaybeT $ lookup proved expr) $
+tellRec :: [ProofBuilder s] -> Expression -> MaybeT (WriterT [Either Expression ProofStatement] (ST s)) ProofStatement
+tellRec [Root proved forMP] expr = mplus (MaybeT (lift $ lookup proved expr) >>= \stmt -> lift (tell [Right stmt]) >> return stmt) $
     let accept stmt = do
-        lift $ insert proved expr stmt
+        lift $ lift $ insert proved expr stmt
         case expr of
             Implication _ r -> do
-                existing <- lift $ liftM (fromMaybe []) $ lookup forMP r
-                lift $ insert forMP r (stmt:existing)
+                existing <- lift $ lift $ liftM (fromMaybe []) $ lookup forMP r
+                lift $ lift $ insert forMP r (stmt:existing)
             _ -> return ()
+        lift $ tell [Right stmt]
         return stmt
-    in if isJust $ getClassicAxiom expr then accept $ Axiom expr else do
-        (left, impl) <- MaybeT $ liftM listToMaybe $ runListT $ do
+    in if isJust $ getClassicAxiom expr then accept $ Axiom expr else (do
+        (left, impl) <- MaybeT $ lift $ liftM listToMaybe $ runListT $ do
             impl <- ListT $ liftM (fromMaybe []) $ lookup forMP expr
             left <- lift $ lookup proved $ getLeft $ getExpression impl
             guard $ isJust left
             return (fromJust left, impl)
-        accept $ ModusPonens expr left impl
+        accept $ ModusPonens expr left impl) `mplus` (MaybeT $ tell [Left expr] >> return Nothing)
 tellRec list@(Supposition supp proved forMP : nextStep) expr =
     let accept = do
-            lift $ insert proved expr ()
+            lift $ lift $ insert proved expr ()
             case expr of
                 Implication _ r -> do
-                    existing <- lift $ liftM (fromMaybe []) $ lookup forMP r
-                    lift $ insert forMP r (expr:existing)
+                    existing <- lift $ lift $ liftM (fromMaybe []) $ lookup forMP r
+                    lift $ lift $ insert forMP r (expr:existing)
                 _ -> return ()
         assume = do
             tellRec nextStep $ expr
@@ -60,10 +62,10 @@ tellRec list@(Supposition supp proved forMP : nextStep) expr =
             accept
             return lastProved
     in (do
-        MaybeT $ lookup proved expr
+        MaybeT $ lift $ lookup proved expr
         let Root lastProved _ = last nextStep
             fullExpr = foldl (\impl (Supposition supp _ _) -> supp --> impl) expr $ init list
-        MaybeT $ lookup lastProved fullExpr
+        MaybeT $ lift $ lookup lastProved fullExpr
     ) `mplus` if expr == supp then do
         accept
         tellRec nextStep $ expr --> expr --> expr
@@ -72,7 +74,7 @@ tellRec list@(Supposition supp proved forMP : nextStep) expr =
         tellRec nextStep $ (expr --> (expr --> expr) --> expr) --> expr --> expr
         tellRec nextStep $ expr --> expr
     else if isJust (getClassicAxiom expr) then assume else flip mplus assume $ do
-        left <- MaybeT $ liftM listToMaybe $ runListT $ do
+        left <- MaybeT $ lift $ liftM listToMaybe $ runListT $ do
             left <- ListT $ liftM (fromMaybe []) $ lookup forMP expr
             exists <- lift $ lookup proved $ getLeft left
             guard $ isJust exists
@@ -82,19 +84,19 @@ tellRec list@(Supposition supp proved forMP : nextStep) expr =
         tellRec nextStep $ (supp --> left --> expr) --> supp --> expr
         tellRec nextStep $ supp --> expr
 
-type Proof s = StateT [ProofBuilder s] (MaybeT (ST s))
+type Proof s = StateT [ProofBuilder s] (MaybeT (WriterT [Either Expression ProofStatement] (ST s)))
 
 tellEx :: Expression -> Proof s ProofStatement
 tellEx expr = StateT $ \builder -> do
     result <- tellRec builder expr
     return (result, builder)
 
-assume :: Expression -> Proof s ProofStatement -> Proof s ProofStatement
+assume :: Expression -> Proof s a -> Proof s a
 assume expr inside = do
-    proved <- lift $ lift new
-    forMP <- lift $ lift new
+    proved <- lift $ lift $ lift new
+    forMP <- lift $ lift $ lift new
     StateT $ \supp -> return ((), (Supposition expr proved forMP : supp))
-    tellEx expr
+    --tellEx expr
     lastStmt <- inside
     StateT $ \(_:supp) -> return (lastStmt, supp)
 
@@ -102,10 +104,14 @@ tellSt :: ProofStatement -> Proof s ProofStatement
 tellSt (Axiom expr) = tellEx expr
 tellSt (ModusPonens expr left right) = tellSt left >> tellSt right >> tellEx expr
 
-getProof :: Proof s ProofStatement -> ST s (Maybe ProofStatement)
-getProof p = newBuilder >>= runMaybeT . evalStateT p
+execProof :: Proof s ProofStatement -> ST s (Maybe ProofStatement, [Either Expression ProofStatement])
+execProof p = newBuilder >>= runWriterT . runMaybeT . evalStateT p
     where
         newBuilder = do
             proved <- new
             forMP <- new
             return [Root proved forMP]
+
+getProof = liftM fst . execProof
+
+getLog = liftM snd . execProof
