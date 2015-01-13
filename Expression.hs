@@ -19,7 +19,7 @@ instance Show Expression where
         Var a -> show p
         Gap a -> show p
         Not a -> show p
-        _     -> "(" ++ show p ++ ")") 
+        _     -> "(" ++ show p ++ ")")
     show (And l r) = (case l of
         Gap _ -> show l
         Var _ -> show l
@@ -86,8 +86,4 @@ matchesMaybe (Gap n) res = Just [if i < n then Nothing else Just res | i <- [0..
 matchesMaybe _ _ = Nothing
 
 matches :: Expression -> Expression -> Maybe [Expression]
-matches e1 e2 = do
-    res <- matchesMaybe e1 e2
-    if all isJust res
-        then return $ catMaybes res
-        else Nothing
+matches e1 e2 = matchesMaybe e1 e2 >>= sequence
