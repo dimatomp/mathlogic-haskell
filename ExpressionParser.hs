@@ -13,12 +13,12 @@ import Expression
 
 type Parser = StateT ByteString Maybe
 
-allowChars :: (Char -> Bool) -> Parser ByteString
+allowChars :: (Char -> Bool) -> Parser String
 allowChars pred = StateT $ \str ->
     let (pref, suf) = span pred str
     in if null pref
         then mzero
-        else return (pref, suf)
+        else return (unpack pref, suf)
 
 char c = StateT $ \str -> if null str then mzero else
     let f = head str

@@ -1,89 +1,134 @@
+{-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
+
 module Expression where
 
 import Data.Maybe
-import Data.Hashable
-import Data.ByteString.Char8 hiding (all)
+import Data.Functor
+import Data.List
 
-data Expression = Var { getName :: ByteString }
-                | Gap { getNumber :: Int }
-                | Not { getParameter :: Expression }
-                | And { getLeft :: Expression, getRight :: Expression }
-                | Or { getLeft :: Expression, getRight :: Expression }
-                | Implication { getLeft :: Expression, getRight :: Expression }
-                deriving Eq
+import Control.Monad
+
+import Algebra.Monad.Base (bind2)
+
+data Function = Stroke Function
+              | Mult Function Function
+              | Plus Function Function
+              | Var String
+              | Zero
+              deriving (Eq, Ord)
+
+instance Show Function where
+    showsPrec _ (Stroke p) = showsPrec 7 p . showChar '\''
+    showsPrec _ (Var s) = showString s
+    showsPrec n (Mult l r) = showParen (n > 6) $ showsPrec 6 l . showChar '*' . showsPrec 7 r
+    showsPrec n (Plus l r) = showParen (n > 5) $ showsPrec 5 l . showChar '+' . showsPrec 6 r
+    showsPrec _ Zero = showChar '0'
+
+data Expression = Gap String
+                | Not Expression
+                | And Expression Expression
+                | Or Expression Expression
+                | Implication Expression Expression
+                | Forall String Expression
+                | Exist String Expression
+                | Equal Function Function
+                | Predicate String [Function]
+                deriving (Eq, Ord)
 
 instance Show Expression where
-    show (Gap n) = "[" ++ show n ++ "]"
-    show (Var a) = unpack a
-    show (Not p) = "!" ++ (case p of
-        Var a -> show p
-        Gap a -> show p
-        Not a -> show p
-        _     -> "(" ++ show p ++ ")")
-    show (And l r) = (case l of
-        Gap _ -> show l
-        Var _ -> show l
-        Not _ -> show l
-        _     -> "(" ++ show l ++ ")") ++ "&" ++ (case r of
-            Or _ _          -> "(" ++ show r ++ ")"
-            Implication _ _ -> "(" ++ show r ++ ")"
-            _               -> show r)
-    show (Or l r) = (case l of
-        Or _ _          -> "(" ++ show l ++ ")"
-        Implication _ _ -> "(" ++ show l ++ ")"
-        _               -> show l) ++ "|" ++ (case r of
-            Implication _ _ -> "(" ++ show r ++ ")"
-            _               -> show r)
-    show (Implication l r) = (case l of
-        Implication _ _ -> "(" ++ show l ++ ")"
-        _               -> show l) ++ "->" ++ show r
+    showsPrec _ (Gap n) = showString n
+    showsPrec _ (Not p) = showChar '!' . showsPrec 5 p
+    showsPrec n (And l r) = showParen (n > 3) $ showsPrec 3 l . showChar '&' . showsPrec 4 r
+    showsPrec n (Or l r) = showParen (n > 2) $ showsPrec 2 l . showChar '|' . showsPrec 3 r
+    showsPrec n (Implication l r) = showParen (n > 1) $ showsPrec 2 l . showString "->" . showsPrec 1 r
+    showsPrec _ (Forall s e) = showChar '@' . showString s . showsPrec 7 e
+    showsPrec _ (Exist s e) = showChar '?' . showString s . showsPrec 7 e
+    showsPrec _ (Equal f1 f2) = shows f1 . showChar '=' . shows f2
+    showsPrec _ (Predicate s list) = showString s . showChar '(' . showParam list . showChar ')'
+        where
+            showParam [expr] = shows expr
+            showParam (f:s) = shows f . showChar ',' . showParam s
 
+infixl 6 ***
+infixl 5 +++
+infixl 4 ===
 infixl 3 &&&
 infixl 2 |||
 infixr 1 -->
+(***) = Mult
+(+++) = Plus
+(===) = Equal
 (&&&) = And
 (|||) = Or
 (-->) = Implication
 
-wrapInBrackets :: Int -> Int -> Int
-wrapInBrackets p a = (p + a) * p + 2
+freeForSubst :: Function -> Expression -> String -> Bool
+freeForSubst theta phi x = verify (grabFunc theta) phi
+  where
+      grabFunc (Stroke p) = grabFunc p
+      grabFunc (Mult l r) = grabFunc l `union` grabFunc r
+      grabFunc (Plus l r) = grabFunc l `union` grabFunc r
+      grabFunc (Var x) = [x]
+      grabFunc Zero = []
 
-instance Hashable Expression where
-    hashWithSalt p (Var str) = wrapInBrackets p $ hashWithSalt p str
-    hashWithSalt p (And left right) = wrapInBrackets p $ ((hashWithSalt p left) * p + 5) * p + hashWithSalt p right
-    hashWithSalt p (Or left right) = wrapInBrackets p $ ((hashWithSalt p left) * p + 4) * p + hashWithSalt p right
-    hashWithSalt p (Implication left right) = wrapInBrackets p $ ((hashWithSalt p left) * p + 3) * p + hashWithSalt p right
-    hashWithSalt p (Not param) = wrapInBrackets p $ 6 * p + hashWithSalt p param
-    hashWithSalt p (Gap num) = wrapInBrackets p $ num + 7
+      verifyNot (Forall _ p) = verifyNot p
+      verifyNot (Exist _ p) = verifyNot p
+      verifyNot (Not p) = verifyNot p
+      verifyNot (And a b) = verifyNot a && verifyNot b
+      verifyNot (Or a b) = verifyNot a && verifyNot b
+      verifyNot (Implication a b) = verifyNot a && verifyNot b
+      verifyNot (Equal l r) = not $ x `elem` grabFunc l ++ grabFunc r
+      verifyNot (Predicate _ list) = all (not . elem x . grabFunc) list
+      verifyNot (Gap _) = True
 
-fillInGaps :: Expression -> [Expression] -> Expression
-fillInGaps r@(Var _) _ = r
-fillInGaps (And left right) list = (fillInGaps left list) &&& (fillInGaps right list)
-fillInGaps (Or left right) list = (fillInGaps left list) ||| (fillInGaps right list)
-fillInGaps (Implication left right) list = (fillInGaps left list) --> (fillInGaps right list)
-fillInGaps (Not par) list = Not $ fillInGaps par list
-fillInGaps (Gap i) list = list !! i
+      verify l (Forall y p)
+        | y `elem` l = verifyNot p
+        | otherwise = verify l p
+      verify l (Exist y p)
+        | y `elem` l = verifyNot p
+        | otherwise = verify l p
+      verify l (Not p) = verify l p
+      verify l (And a b) = verify l a && verify l b
+      verify l (Or a b) = verify l a && verify l b
+      verify l (Implication a b) = verify l a && verify l b
+      verify _ _ = True
 
-merge :: Maybe [Maybe Expression] -> Maybe [Maybe Expression] -> Maybe [Maybe Expression]
-merge (Just (s1:f1)) (Just (s2:f2)) = do
-    f <- merge (Just f1) (Just f2)
-    case s1 of
-        Nothing -> return (s2:f)
-        _       -> case s2 of
-            Nothing -> return (s1:f)
-            _       -> if s1 == s2 then return (s1:f) else Nothing
-merge (Just []) (Just res) = Just res
-merge (Just res) (Just []) = Just res
-merge _ _ = Nothing
+matches = (isJust .) . matchWith
 
-matchesMaybe :: Expression -> Expression -> Maybe [Maybe Expression]
-matchesMaybe ra@(Var a) rb@(Var b) = merge (Just [Just ra]) (Just [Just rb])
-matchesMaybe (And l1 r1) (And l2 r2) = merge (matchesMaybe l1 l2) (matchesMaybe r1 r2)
-matchesMaybe (Or l1 r1) (Or l2 r2) = merge (matchesMaybe l1 l2) (matchesMaybe r1 r2)
-matchesMaybe (Implication l1 r1) (Implication l2 r2) = merge (matchesMaybe l1 l2) (matchesMaybe r1 r2)
-matchesMaybe (Not p1) (Not p2) = matchesMaybe p1 p2
-matchesMaybe (Gap n) res = Just [if i < n then Nothing else Just res | i <- [0..n]]
-matchesMaybe _ _ = Nothing
+matchWith :: Expression -> Expression -> Maybe ([(String, Expression)], [(String, Function)])
+matchWith e1 e2 = matchesMaybe (\_ -> Nothing) e1 e2
+    where
+        mergeFunc :: Eq a => [(String, a)] -> [(String, a)] -> Maybe [(String, a)]
+        mergeFunc l1 l2 = (forM_ l1 $ \(k, v) ->
+            case lookup k l2 of
+                Just v2 -> guard $ v == v2
+                Nothing -> return ()) >> Just (union l1 l2)
 
-matches :: Expression -> Expression -> Maybe [Expression]
-matches e1 e2 = matchesMaybe e1 e2 >>= sequence
+        matchesFunc _ Zero Zero = Just []
+        matchesFunc t (Var n) res = case t n of
+            Just name -> guard (res == Var name) >> Just []
+            Nothing -> Just [(n, res)]
+        matchesFunc t (Stroke e1) (Stroke e2) = matchesFunc t e1 e2
+        matchesFunc t (Plus l1 r1) (Plus l2 r2) = bind2 mergeFunc (matchesFunc t l1 l2) (matchesFunc t r1 r2)
+        matchesFunc t (Mult l1 r1) (Mult l2 r2) = bind2 mergeFunc (matchesFunc t l1 l2) (matchesFunc t r1 r2)
+        matchesFunc _ _ _ = Nothing
+
+        merge (e1, f1) (e2, f2) = do
+            e <- mergeFunc e1 e2
+            f <- mergeFunc f1 f2
+            return (e, f)
+
+        add t s1 s2 s = if s == s1 then Just s2 else t s
+
+        matchesMaybe t (Gap n) res = Just ([(n, res)], [])
+        matchesMaybe t (And l1 r1) (And l2 r2) = bind2 merge (matchesMaybe t l1 l2) (matchesMaybe t r1 r2)
+        matchesMaybe t (Or l1 r1) (Or l2 r2) = bind2 merge (matchesMaybe t l1 l2) (matchesMaybe t r1 r2)
+        matchesMaybe t (Implication l1 r1) (Implication l2 r2) = bind2 merge (matchesMaybe t l1 l2) (matchesMaybe t r1 r2)
+        matchesMaybe t (Not p1) (Not p2) = matchesMaybe t p1 p2
+        matchesMaybe t (Forall s1 e1) (Forall s2 e2) = matchesMaybe (add t s1 s2) e1 e2
+        matchesMaybe t (Exist s1 e1) (Exist s2 e2) = matchesMaybe (add t s1 s2) e1 e2
+        matchesMaybe t (Equal a b) (Equal c d) = fmap (\l -> ([], l)) $ bind2 mergeFunc (matchesFunc t a c) (matchesFunc t b d)
+        matchesMaybe t (Predicate s1 l1) (Predicate s2 l2)
+            | s1 == s2 = liftM (\l -> ([], l)) $ zipWithM (matchesFunc t) l1 l2 >>= foldM mergeFunc []
+            | otherwise = Nothing
+        matchesMaybe _ _ _ = Nothing
