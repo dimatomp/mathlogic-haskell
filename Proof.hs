@@ -1,117 +1,159 @@
-{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE NoImplicitPrelude, TupleSections, FlexibleInstances #-}
 
-module Proof (execProof, getProof, getLog, Proof, tellEx, assume, ProofStatement(..)) where
+module Proof where
 
 import Prelude hiding (lookup)
 
-import Data.HashTable.ST.Basic
+import Data.Map hiding (foldl, foldr, map)
 import Data.Maybe
-import Data.List (find)
+import qualified Data.List as L
 
 import Control.Monad
-import Control.Monad.ST
-import Control.Monad.Trans
 import Control.Monad.Trans.State
-import Control.Monad.Trans.Maybe
-import Control.Monad.Trans.List
-import Control.Monad.Trans.Writer
 
 import Expression
-import Axioms (getClassicAxiom)
+import Axioms
 
-data ProofStatement = Axiom { getExpression :: Expression }
+data ProofStatement = AxiomStatement { getExpression :: Expression, getNum :: Int }
                     | ModusPonens { getExpression :: Expression
                                   , getFrom :: ProofStatement, getImpl :: ProofStatement }
+                    | Any { getExpression :: Expression, getFrom :: ProofStatement }
+                    | Exists { getExpression :: Expression , getFrom :: ProofStatement }
 
 instance Show ProofStatement where
     show = show . getExpression
 
-data ProofBuilder s = Root (HashTable s Expression ProofStatement) (HashTable s Expression [ProofStatement])
-                    | Supposition Expression (HashTable s Expression ()) (HashTable s Expression [Expression])
+data ProofBuilder = Root [Axiom] (Map Expression ProofStatement) (Map Expression [Expression]) [ProofStatement]
+                  | Assumption Expression (Map Expression [Expression]) [Expression]
 
-tellRec :: [ProofBuilder s] -> Expression -> MaybeT (WriterT [Either Expression ProofStatement] (ST s)) ProofStatement
-tellRec [Root proved forMP] expr = mplus (MaybeT (lift $ lookup proved expr) >>= \stmt -> lift (tell [Right stmt]) >> return stmt) $
-    let accept stmt = do
-        lift $ lift $ insert proved expr stmt
-        case expr of
-            Implication _ r -> do
-                existing <- lift $ lift $ liftM (fromMaybe []) $ lookup forMP r
-                lift $ lift $ insert forMP r (stmt:existing)
-            _ -> return ()
-        lift $ tell [Right stmt]
-        return stmt
-    in if isJust $ getClassicAxiom expr then accept $ Axiom expr else (do
-        (left, impl) <- MaybeT $ lift $ liftM listToMaybe $ runListT $ do
-            impl <- ListT $ liftM (fromMaybe []) $ lookup forMP expr
-            left <- lift $ lookup proved $ getLeft $ getExpression impl
-            guard $ isJust left
-            return (fromJust left, impl)
-        accept $ ModusPonens expr left impl) `mplus` (MaybeT $ tell [Left expr] >> return Nothing)
-tellRec list@(Supposition supp proved forMP : nextStep) expr =
-    let accept = do
-            lift $ lift $ insert proved expr ()
-            case expr of
-                Implication _ r -> do
-                    existing <- lift $ lift $ liftM (fromMaybe []) $ lookup forMP r
-                    lift $ lift $ insert forMP r (expr:existing)
-                _ -> return ()
-        assume = do
-            tellRec nextStep $ expr
-            tellRec nextStep $ expr --> supp --> expr
-            lastProved <- tellRec nextStep $ supp --> expr
-            accept
-            return lastProved
-    in (do
-        MaybeT $ lift $ lookup proved expr
-        let Root lastProved _ = last nextStep
-            fullExpr = foldl (\impl (Supposition supp _ _) -> supp --> impl) expr $ init list
-        MaybeT $ lift $ lookup lastProved fullExpr
-    ) `mplus` if expr == supp then do
-        accept
-        tellRec nextStep $ expr --> expr --> expr
-        tellRec nextStep $ expr --> (expr --> expr) --> expr
-        tellRec nextStep $ (expr --> expr --> expr) --> (expr --> (expr --> expr) --> expr) --> expr --> expr
-        tellRec nextStep $ (expr --> (expr --> expr) --> expr) --> expr --> expr
-        tellRec nextStep $ expr --> expr
-    else if isJust (getClassicAxiom expr) then assume else flip mplus assume $ do
-        left <- MaybeT $ lift $ liftM listToMaybe $ runListT $ do
-            left <- ListT $ liftM (fromMaybe []) $ lookup forMP expr
-            exists <- lift $ lookup proved $ getLeft left
-            guard $ isJust exists
-            return $ getLeft left
-        accept
-        tellRec nextStep $ (supp --> left) --> (supp --> left --> expr) --> supp --> expr
-        tellRec nextStep $ (supp --> left --> expr) --> supp --> expr
-        tellRec nextStep $ supp --> expr
+initBuilder :: [Axiom] -> [ProofBuilder]
+initBuilder axioms = [Root axioms empty empty []]
 
-type Proof s = StateT [ProofBuilder s] (MaybeT (WriterT [Either Expression ProofStatement] (ST s)))
+wrapMaybe (Just res) = Right res
+wrapMaybe _ = Left Nothing
 
-tellEx :: Expression -> Proof s ProofStatement
-tellEx expr = StateT $ \builder -> do
-    result <- tellRec builder expr
-    return (result, builder)
+instance MonadPlus (Either ErrorReport) where
+    mzero = Left Nothing
+    mplus (Right a) _ = Right a
+    mplus (Left res) (Left Nothing) = Left res
+    mplus _ second = second
 
-assume :: Expression -> Proof s a -> Proof s a
-assume expr inside = do
-    proved <- lift $ lift $ lift new
-    forMP <- lift $ lift $ lift new
-    StateT $ \supp -> return ((), (Supposition expr proved forMP : supp))
-    --tellEx expr
-    lastStmt <- inside
-    StateT $ \(_:supp) -> return (lastStmt, supp)
+type Proof = StateT [ProofBuilder] (Either ErrorReport)
 
-tellSt :: ProofStatement -> Proof s ProofStatement
-tellSt (Axiom expr) = tellEx expr
-tellSt (ModusPonens expr left right) = tellSt left >> tellSt right >> tellEx expr
+addAssumption :: Expression -> Proof ()
+addAssumption expr = modify (Assumption expr empty [] :)
 
-execProof :: Proof s ProofStatement -> ST s (Maybe ProofStatement, [Either Expression ProofStatement])
-execProof p = newBuilder >>= runWriterT . runMaybeT . evalStateT p
-    where
-        newBuilder = do
-            proved <- new
-            forMP <- new
-            return [Root proved forMP]
+remAssumption :: Proof ()
+remAssumption = modify tail
 
-getProof = liftM fst . execProof
+assume :: Expression -> Proof a -> Proof a
+assume expr proof = do
+    addAssumption expr
+    res <- proof
+    remAssumption
+    return res
 
-getLog = liftM snd . execProof
+tellEx :: Expression -> Proof ProofStatement
+tellEx expr = StateT (`tellRec` expr)
+
+tryTell :: Expression -> Proof (Either Expression ProofStatement)
+tryTell expr = do
+    state <- get
+    case runStateT (tellEx expr) state of
+        Left _ -> return $ Left expr
+        Right (result, state) -> put state >> (return $ Right result)
+
+tellRec :: [ProofBuilder] -> Expression -> Either ErrorReport (ProofStatement, [ProofBuilder])
+tellRec [Root axioms proved mp log] expr =
+    let checkProved = wrapMaybe $ lookup expr proved
+        tryAxioms = do
+            number <- msum $ zipWith (\num f -> liftM (const num) (f expr)) [1..] axioms
+            return $ AxiomStatement expr number
+        tryMP = do
+            list <- wrapMaybe $ lookup expr mp
+            left <- msum $ map (wrapMaybe . (`lookup` proved)) list
+            let impl = fromJust $ lookup (getExpression left --> expr) proved
+            return $ ModusPonens expr left impl
+        tryPredicates = case expr of
+            Implication (Exist x a) b -> do
+                from <- wrapMaybe $ lookup (a --> b) proved
+                when (hasOccurrences x b) $ Left $ Just $ FreeOccurrence x b
+                return $ Exists expr from
+            Implication a (Forall x b) -> do
+                from <- wrapMaybe $ lookup (a --> b) proved
+                when (hasOccurrences x a) $ Left $ Just $ FreeOccurrence x a
+                return $ Any expr from
+            _ -> mzero
+    in do
+        result <- {-trace ("1: " ++ show expr) $ -} checkProved `mplus` tryAxioms `mplus` tryMP `mplus` tryPredicates
+        let newProved = insert expr result proved
+            newMP = case expr of
+                Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (l:list) mp
+                _ -> mp
+        {-trace ("1: Success") $ -}
+        return (result, [Root axioms newProved newMP (result:log)])
+tellRec stack@(Assumption supp mp log : tail) expr =
+    let itsMe = do
+            guard $ expr == supp
+            (_, tail) <- tellRec tail $ expr --> expr --> expr
+            (_, tail) <- tellRec tail $ expr --> (expr --> expr) --> expr
+            (_, tail) <- tellRec tail $ (expr --> (expr --> expr)) --> (expr --> (expr --> expr) --> expr) --> expr --> expr
+            (_, tail) <- tellRec tail $ (expr --> (expr --> expr) --> expr) --> expr --> expr
+            tellRec tail $ expr --> expr
+        whoKnows = do
+            (_, tail) <- tellRec tail expr
+            (_, tail) <- tellRec tail $ expr --> supp --> expr
+            tellRec tail $ supp --> expr
+        tryMP = do
+            list <- wrapMaybe $ lookup expr mp
+            (left, tail) <- msum $ map (\left -> liftM ((left,) . snd) $ tellRec tail $ supp --> left) list
+            --(_, tail) <- tellRec tail $ supp --> left
+            (_, tail) <- tellRec tail $ supp --> left --> expr
+            (_, tail) <- tellRec tail $ (supp --> left) --> (supp --> left --> expr) --> supp --> expr
+            (_, tail) <- tellRec tail $ (supp --> left --> expr) --> supp --> expr
+            tellRec tail $ supp --> expr
+        swapArgs a b c = assume b $ assume a $ do
+            tellEx $ a --> b --> c
+            tellEx $ a
+            tellEx $ b --> c
+            tellEx $ b
+            tellEx $ c
+        tryPredicates = case expr of
+            Implication (Exist x a) b -> do
+                (_, tail) <- tellRec tail $ supp --> a --> b
+                when (hasOccurrences x b) $ Left $ Just $ FreeOccurrence x b
+                when (hasOccurrences x supp) $ Left $ Just $ BadRuleUsage x supp
+                (_, tail) <- runStateT (swapArgs supp a b) tail
+                (_, tail) <- tellRec tail $ Exist x a --> supp --> b
+                runStateT (swapArgs (Exist x a) supp b) tail
+            Implication a (Forall x b) -> do
+                (_, tail) <- tellRec tail $ supp --> a --> b
+                when (hasOccurrences x a) $ Left $ Just $ FreeOccurrence x a
+                when (hasOccurrences x supp) $ Left $ Just $ BadRuleUsage x supp
+                (_, tail) <- flip runStateT tail $ assume (supp &&& a) $ do
+                    tellEx $ supp &&& a
+                    tellEx $ supp &&& a --> supp
+                    tellEx $ supp
+                    tellEx $ supp &&& a --> a
+                    tellEx $ a
+                    tellEx $ supp --> a --> b
+                    tellEx $ a --> b
+                    tellEx $ b
+                (_, tail) <- tellRec tail $ supp &&& a --> Forall x b
+                flip runStateT tail $ assume supp $ assume a $ do
+                    tellEx $ supp
+                    tellEx $ a
+                    tellEx $ supp --> a --> supp &&& a
+                    tellEx $ a --> supp &&& a
+                    tellEx $ supp &&& a
+                    tellEx $ supp &&& a --> Forall x b
+                    tellEx $ Forall x b
+            _ -> mzero
+    in do
+        (result, tail) <- {-trace (show (length stack) ++ ": " ++ show expr) $ -}
+            itsMe `mplus` whoKnows `mplus` tryMP `mplus` tryPredicates
+        let newMP = case expr of
+                Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (L.insert l list) mp
+                _ -> mp
+        {-trace (show (length stack) ++ ": Success") $ -}
+        return (result, Assumption supp newMP (expr:log) : tail)

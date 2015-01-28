@@ -1,18 +1,12 @@
-module ProofGeneration (proveStmt, traceExpr) where
+module ProofGeneration where
 
 import Expression hiding (merge)
 import Proof
 
 import Data.List
 import Data.Maybe
-import Data.ByteString.Char8 (ByteString)
-
---import Debug.Trace
 
 import Control.Monad
-import Control.Monad.ST
-
-trace _ a = a
 
 proveAG a b c = do
     tellEx $ a --> b
@@ -181,7 +175,6 @@ notAThenB a b = assume (a ||| b) $ assume (Not a) $ do
     tellEx $ Not (Not b) --> b
     tellEx $ b
 
--- TODO Maybe there is a simple proof
 inMorganAnd a b = assume (Not a &&& Not b) $ do
     tellEx $ Not a &&& Not b
     tellEx $ Not a &&& Not b --> Not a
@@ -226,8 +219,8 @@ notAThenBIsOr a b = do
     proveBA (Not a --> b) (Not (Not (a ||| b)) --> a ||| b)
     proveAG (Not a --> b) (Not (Not (a ||| b))) (a ||| b)
 
-proveStmt :: Expression -> Proof s ProofStatement
-proveStmt toBeProved@(Implication left right) = trace (show toBeProved) $ case left of
+proveStmt :: Expression -> Proof ProofStatement
+proveStmt toBeProved@(Implication left right) = case left of
     And andL andR -> do
         tellEx $ left --> andL
         tellEx $ left --> andR
@@ -266,29 +259,29 @@ proveStmt toBeProved@(Implication left right) = trace (show toBeProved) $ case l
         proveStmt $ p --> right
         proveBA (Not (Not p)) (p --> right)
         proveAG (Not (Not p)) p right
-    Not p -> trace ("Assume " ++ show left) $ assume left $ tellEx left >> ((do
+    Not p -> assume left $ tellEx left >> ((do
                 tellEx $ p
                 intuitionist p right
                 tellEx $ p --> right
                 tellEx $ right
                 ) `mplus` proveStmt right)
-    p -> trace ("Assume " ++ show left) $ assume left $ tellEx left >> ((do
+    p -> assume left $ tellEx left >> ((do
              tellEx $ Not p
              intuitionist p right
              tellEx $ p --> right
              tellEx right
              ) `mplus` proveStmt right)
-proveStmt toBeProved@(And left right) = trace (show toBeProved) $ do
+proveStmt toBeProved@(And left right) = do
     tellEx $ left
     tellEx $ right
     tellEx $ left --> right --> left &&& right
     tellEx $ right --> left &&& right
     tellEx $ toBeProved
-proveStmt toBeProved@(Or left right) = trace (show toBeProved) $ do
+proveStmt toBeProved@(Or left right) = do
     proveStmt $ Not left --> right
     notAThenBIsOr left right
     tellEx $ toBeProved
-proveStmt toBeProved@(Not param) = trace (show toBeProved) $ case param of
+proveStmt toBeProved@(Not param) = case param of
     And andL andR -> do
         proveStmt $ Not andL ||| Not andR
         inMorganOr andL andR
@@ -306,17 +299,17 @@ proveStmt toBeProved@(Not param) = trace (show toBeProved) $ case param of
         proveStmt $ p
         tellEx $ toBeProved
     _ -> tellEx toBeProved
-proveStmt toBeProved = trace (show toBeProved) $ tellEx toBeProved
+proveStmt toBeProved = tellEx toBeProved
 
-traceExpr :: Expression -> Maybe [(ByteString, Bool)]
+traceExpr :: Expression -> Maybe [(String, Bool)]
 traceExpr expr =
-    let gather (Var s) = [s]
+    let gather (Gap s) = [s]
         gather (Not p) = gather p
         gather (And l r) = union (gather l) (gather r)
         gather (Or l r) = union (gather l) (gather r)
         gather (Implication l r) = union (gather l) (gather r)
 
-        check (Var s) list b = b == (fromJust $ lookup s list)
+        check (Gap s) list b = b == (fromJust $ lookup s list)
         check (Not p) list b = check p list $ not b
         check (And l r) list True = check l list True && check r list True
         check (And l r) list False = check l list False || check r list False

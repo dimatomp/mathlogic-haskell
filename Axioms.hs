@@ -2,12 +2,15 @@ module Axioms where
 
 import Expression
 import Data.Maybe
+import Control.Monad (when)
 
-import Control.Monad (guard)
+type ErrorReport = Maybe ErrorMessage
+type Axiom = Expression -> Either ErrorReport ()
 
-type Axiom = Expression -> Bool
+justMatch patt expr = if patt `matches` expr then Right () else Left Nothing
 
-classicAxioms = map matches [
+basicAxioms :: [Axiom]
+basicAxioms = map justMatch [
     Gap "A" --> Gap "B" --> Gap "A",
     (Gap "A" --> Gap "B") --> (Gap "A" --> Gap "B" --> Gap "C") --> (Gap "A" --> Gap "C"),
     Gap "A" --> Gap "B" --> Gap "A" &&& Gap "B",
@@ -16,24 +19,40 @@ classicAxioms = map matches [
     Gap "A" --> Gap "A" ||| Gap "B",
     Gap "B" --> Gap "A" ||| Gap "B",
     (Gap "A" --> Gap "C") --> (Gap "B" --> Gap "C") --> (Gap "A" ||| Gap "B" --> Gap "C"),
-    (Gap "A" --> Gap "B") --> (Gap "A" --> Not (Gap "B")) --> Not (Gap "A"),
-    Not (Not (Gap "A")) --> Gap "A"
+    (Gap "A" --> Gap "B") --> (Gap "A" --> Not (Gap "B")) --> Not (Gap "A")
     ]
 
+classicAxiom :: Axiom
+classicAxiom = justMatch $ Not (Not (Gap "A")) --> Gap "A"
+
+intuitAxiom :: Axiom
+intuitAxiom = justMatch $ Gap "A" --> Not (Gap "A") --> Gap "B"
+
+guardU True = Right ()
+guardU False = Left Nothing
+
+eitherMatch a b = case matchWith a b of
+    Just res -> Right res
+    _ -> Left Nothing
+
+predAxioms :: [Axiom]
 predAxioms = [forAll, exists]
     where
-        forAll (Implication (Forall x a) b) = isJust $ do
-            (expr, func) <- matchWith a b
-            guard $ all (\(k, v) -> v == Gap k) expr
-            guard $ all (\(k, v) -> if k == x then freeForSubst v a x else v == Var k) func
-        forAll _ = False
-        exists (Implication a (Exist x b)) = isJust $ do
-            (expr, func) <- matchWith b a
-            guard $ all (\(k, v) -> v == Gap k) expr
-            guard $ all (\(k, v) -> if k == x then freeForSubst v a x else v == Var k) func
-        exists _ = False
+        forAll (Implication (Forall x a) b) = do
+            ((expr, func), err) <- eitherMatch a b
+            guardU $ all (\(k, v) -> v == Gap k) expr
+            guardU $ all (\(k, v) -> k == x || v == Var k) func
+            when (isJust err) $ Left err
+        forAll _ = Left Nothing
+        exists (Implication a (Exist x b)) = do
+            ((expr, func), err) <- eitherMatch b a
+            guardU $ all (\(k, v) -> v == Gap k) expr
+            guardU $ all (\(k, v) -> k == x || v == Var k) func
+            when (isJust err) $ Left err
+        exists _ = Left Nothing
 
-arithAxioms = map matches [
+arithAxioms :: [Axiom]
+arithAxioms = map justMatch [
     Var "a" === Var "b" --> Stroke (Var "a") === Stroke (Var "b"),
     Var "a" === Var "b" --> Var "a" === Var "c" --> Var "b" === Var "c",
     Stroke (Var "a") === Stroke (Var "b") --> Var "a" === Var "b",
@@ -44,12 +63,14 @@ arithAxioms = map matches [
     Var "a" *** Stroke (Var "b") === Var "a" *** Var "b" +++ Var "a"
     ] ++ [lastScheme]
     where
-        lastScheme (Implication (And a (Forall x (Implication b c))) b') = isJust $ do
-            guard $ b == b'
-            (expr, func) <- matchWith b a
-            guard $ all (\(k, v) -> v == Gap k) expr
-            guard $ all (\(k, v) -> v == if k == x then Zero else Var k) func
-            (expr, func) <- matchWith b c
-            guard $ all (\(k, v) -> v == Gap k) expr
-            guard $ all (\(k, v) -> v == if k == x then Stroke (Var x) else Var k) func
-        lastScheme _ = False
+        lastScheme input@(Implication (And a (Forall x (Implication b c))) b') = do
+            guardU $ b == b'
+            ((expr, func), _) <- eitherMatch b a
+            guardU $ all (\(k, v) -> v == Gap k) expr
+            guardU $ (x, Zero) `elem` func
+            guardU $ all (\(k, v) -> k == x || v == Var k) func
+            ((expr, func), _) <- eitherMatch b c
+            guardU $ all (\(k, v) -> v == Gap k) expr
+            guardU $ (x, Stroke (Var x)) `elem` func
+            guardU $ all (\(k, v) -> k == x || v == Var k) func
+        lastScheme _ = Left Nothing

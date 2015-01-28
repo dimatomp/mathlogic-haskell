@@ -3,12 +3,16 @@
 module Expression where
 
 import Data.Maybe
-import Data.Functor
 import Data.List
 
 import Control.Monad
+import Control.Monad.Trans.State
 
-import Algebra.Monad.Base (bind2)
+bind2 :: Monad m => (a -> b -> m c) -> m a -> m b -> m c
+bind2 f ma mb = do
+    a <- ma
+    b <- mb
+    f a b
 
 data Function = Stroke Function
               | Mult Function Function
@@ -62,73 +66,76 @@ infixr 1 -->
 (|||) = Or
 (-->) = Implication
 
-freeForSubst :: Function -> Expression -> String -> Bool
-freeForSubst theta phi x = verify (grabFunc theta) phi
-  where
-      grabFunc (Stroke p) = grabFunc p
-      grabFunc (Mult l r) = grabFunc l `union` grabFunc r
-      grabFunc (Plus l r) = grabFunc l `union` grabFunc r
-      grabFunc (Var x) = [x]
-      grabFunc Zero = []
-
-      verifyNot (Forall _ p) = verifyNot p
-      verifyNot (Exist _ p) = verifyNot p
-      verifyNot (Not p) = verifyNot p
-      verifyNot (And a b) = verifyNot a && verifyNot b
-      verifyNot (Or a b) = verifyNot a && verifyNot b
-      verifyNot (Implication a b) = verifyNot a && verifyNot b
-      verifyNot (Equal l r) = not $ x `elem` grabFunc l ++ grabFunc r
-      verifyNot (Predicate _ list) = all (not . elem x . grabFunc) list
-      verifyNot (Gap _) = True
-
-      verify l (Forall y p)
-        | y `elem` l = verifyNot p
-        | otherwise = verify l p
-      verify l (Exist y p)
-        | y `elem` l = verifyNot p
-        | otherwise = verify l p
-      verify l (Not p) = verify l p
-      verify l (And a b) = verify l a && verify l b
-      verify l (Or a b) = verify l a && verify l b
-      verify l (Implication a b) = verify l a && verify l b
-      verify _ _ = True
+data ErrorMessage = UnsafeForSubst Function Expression String
+                  | FreeOccurrence String Expression
+                  | BadRuleUsage String Expression
+                  deriving Show
 
 matches = (isJust .) . matchWith
 
-matchWith :: Expression -> Expression -> Maybe ([(String, Expression)], [(String, Function)])
-matchWith e1 e2 = matchesMaybe (\_ -> Nothing) e1 e2
+matchWith :: Expression -> Expression -> Maybe (([(String, Expression)], [(String, Function)]), Maybe ErrorMessage)
+matchWith e1 e2 = runStateT (matchesMaybe [] e1 e2) Nothing
     where
-        mergeFunc :: Eq a => [(String, a)] -> [(String, a)] -> Maybe [(String, a)]
+        mergeFunc :: (Eq a, MonadPlus m) => [(String, a)] -> [(String, a)] -> m [(String, a)]
         mergeFunc l1 l2 = (forM_ l1 $ \(k, v) ->
             case lookup k l2 of
                 Just v2 -> guard $ v == v2
-                Nothing -> return ()) >> Just (union l1 l2)
+                Nothing -> return ()) >> return (union l1 l2)
 
-        matchesFunc _ Zero Zero = Just []
-        matchesFunc t (Var n) res = case t n of
-            Just name -> guard (res == Var name) >> Just []
-            Nothing -> Just [(n, res)]
+        isSafe :: [String] -> Function -> Bool
+        isSafe list (Stroke f) = isSafe list f
+        isSafe list (Var n) = not $ n `elem` list
+        isSafe list (Plus l r) = isSafe list l && isSafe list r
+        isSafe list (Mult l r) = isSafe list l && isSafe list r
+        isSafe _ Zero = True
+
+        matchesFunc :: [(String, String)] -> Function -> Function -> StateT (Maybe ErrorMessage) Maybe [(String, Function)]
+        matchesFunc _ Zero Zero = return []
+        matchesFunc t (Var n) res@(Var m) = mapM checkForFail t >>= foldr mplus (return [(n, res)])
+            where
+                checkForFail (s1, s2)
+                    | s1 == n || s2 == m = if s1 == n && s2 == m then return $ return [] else mzero
+                    | otherwise = return mzero
+        matchesFunc t (Var n) res = do
+            forM_ t $ guard . (n /=) . fst
+            when (not $ isSafe (map fst t) res) $ put $ Just $ UnsafeForSubst res e1 n
+            return [(n, res)]
         matchesFunc t (Stroke e1) (Stroke e2) = matchesFunc t e1 e2
         matchesFunc t (Plus l1 r1) (Plus l2 r2) = bind2 mergeFunc (matchesFunc t l1 l2) (matchesFunc t r1 r2)
         matchesFunc t (Mult l1 r1) (Mult l2 r2) = bind2 mergeFunc (matchesFunc t l1 l2) (matchesFunc t r1 r2)
-        matchesFunc _ _ _ = Nothing
+        matchesFunc _ _ _ = mzero
 
         merge (e1, f1) (e2, f2) = do
             e <- mergeFunc e1 e2
             f <- mergeFunc f1 f2
             return (e, f)
 
-        add t s1 s2 s = if s == s1 then Just s2 else t s
-
-        matchesMaybe t (Gap n) res = Just ([(n, res)], [])
+        matchesMaybe t (Gap n) res = return ([(n, res)], [])
         matchesMaybe t (And l1 r1) (And l2 r2) = bind2 merge (matchesMaybe t l1 l2) (matchesMaybe t r1 r2)
         matchesMaybe t (Or l1 r1) (Or l2 r2) = bind2 merge (matchesMaybe t l1 l2) (matchesMaybe t r1 r2)
         matchesMaybe t (Implication l1 r1) (Implication l2 r2) = bind2 merge (matchesMaybe t l1 l2) (matchesMaybe t r1 r2)
         matchesMaybe t (Not p1) (Not p2) = matchesMaybe t p1 p2
-        matchesMaybe t (Forall s1 e1) (Forall s2 e2) = matchesMaybe (add t s1 s2) e1 e2
-        matchesMaybe t (Exist s1 e1) (Exist s2 e2) = matchesMaybe (add t s1 s2) e1 e2
-        matchesMaybe t (Equal a b) (Equal c d) = fmap (\l -> ([], l)) $ bind2 mergeFunc (matchesFunc t a c) (matchesFunc t b d)
+        matchesMaybe t (Forall s1 e1) (Forall s2 e2) = matchesMaybe ((s1, s2):t) e1 e2
+        matchesMaybe t (Exist s1 e1) (Exist s2 e2) = matchesMaybe ((s1, s2):t) e1 e2
+        matchesMaybe t (Equal a b) (Equal c d) = liftM (\l -> ([], l)) $ bind2 mergeFunc (matchesFunc t a c) (matchesFunc t b d)
         matchesMaybe t (Predicate s1 l1) (Predicate s2 l2)
             | s1 == s2 = liftM (\l -> ([], l)) $ zipWithM (matchesFunc t) l1 l2 >>= foldM mergeFunc []
-            | otherwise = Nothing
-        matchesMaybe _ _ _ = Nothing
+            | otherwise = mzero
+        matchesMaybe _ _ _ = mzero
+
+hasOccurFunc s (Var n) = s == n
+hasOccurFunc s (Stroke l) = hasOccurFunc s l
+hasOccurFunc s (Plus l r) = hasOccurFunc s l || hasOccurFunc s r
+hasOccurFunc s (Mult l r) = hasOccurFunc s l || hasOccurFunc s r
+hasOccurFunc _ Zero = False
+
+hasOccurrences :: String -> Expression -> Bool
+hasOccurrences s (And l r) = hasOccurrences s l || hasOccurrences s r
+hasOccurrences s (Or l r) = hasOccurrences s l || hasOccurrences s r
+hasOccurrences s (Implication l r) = hasOccurrences s l || hasOccurrences s r
+hasOccurrences s (Not p) = hasOccurrences s p
+hasOccurrences s (Forall n e) = s /= n && hasOccurrences s e
+hasOccurrences s (Exist n e) = s /= n && hasOccurrences s e
+hasOccurrences s (Equal l r) = hasOccurFunc s l || hasOccurFunc s r
+hasOccurrences s (Predicate _ list) = any (hasOccurFunc s) list
+hasOccurrences _ _ = False
