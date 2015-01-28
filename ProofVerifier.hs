@@ -18,6 +18,6 @@ import ProofUtils
 
 main = do
     [fin, fout] <- getArgs
-    Right inputData <- parseFromFile parseProof fin
+    Right inputData <- parseFromFile parseSimpleProof fin
     let Right proof = flip evalStateT (initBuilder $ basicAxioms ++ [classicAxiom]) $ forM inputData tryTell
     writeFile fout $ concatMap (++ "\n") $ map show $ getLoggedProof proof
