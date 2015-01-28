@@ -57,11 +57,7 @@ tellEx :: Expression -> Proof ProofStatement
 tellEx expr = StateT (`tellRec` expr)
 
 tryTell :: Expression -> Proof (Either Expression ProofStatement)
-tryTell expr = do
-    state <- get
-    case runStateT (tellEx expr) state of
-        Left _ -> return $ Left expr
-        Right (result, state) -> put state >> (return $ Right result)
+tryTell expr = liftM Right (tellEx expr) `mplus` return (Left expr)
 
 tellRec :: [ProofBuilder] -> Expression -> Either ErrorReport (ProofStatement, [ProofBuilder])
 tellRec [Root axioms proved mp log] expr =

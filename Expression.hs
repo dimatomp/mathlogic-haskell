@@ -17,6 +17,7 @@ bind2 f ma mb = do
 data Function = Stroke Function
               | Mult Function Function
               | Plus Function Function
+              | Func String [Function]
               | Var String
               | Zero
               deriving (Eq, Ord)

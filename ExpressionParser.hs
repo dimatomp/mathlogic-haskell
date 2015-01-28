@@ -1,88 +1,54 @@
-{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE NoImplicitPrelude, FlexibleContexts #-}
 
 module ExpressionParser  where
 
-import Prelude hiding (head, tail, null, span)
+import Prelude
 
-import Data.Char
-import Data.ByteString.Char8 hiding (foldr, foldl, map)
+import Data.List
 
-import Control.Monad.State
+import Text.Parsec
+import Text.Parsec.Char
+import Text.Parsec.Combinator
+
+import Control.Monad
+import Control.Monad.Identity
 
 import Expression
 
-type Parser = StateT ByteString Maybe
+lexemeLower :: Stream s m Char => ParsecT s u m String
+lexemeLower = liftM2 (:) lower $ many digit
 
-allowChars :: (Char -> Bool) -> Parser String
-allowChars pred = StateT $ \str ->
-    let (pref, suf) = span pred str
-    in if null pref
-        then mzero
-        else return (unpack pref, suf)
+lexemeUpper :: Stream s m Char => ParsecT s u m String
+lexemeUpper = liftM2 (:) upper $ many digit
 
-char c = StateT $ \str -> if null str then mzero else
-    let f = head str
-        s = tail str
-    in if c == f
-        then return (f, s)
-        else mzero
+braces :: Stream s m Char => ParsecT s u m a -> ParsecT s u m a
+braces = between (char '(') (char ')')
 
-once :: Parser a -> Parser [a]
+parseTerm :: Stream s m Char => ParsecT s u m Function
+parseTerm = parsePlus
+    where
+        parsePlus = liftM (foldl1 (+++)) $ parseMult `sepBy1` char '+'
+        parseMult = liftM (foldl1 (***)) $ parseFunc `sepBy1` char '*'
+        parseFunc = (liftM2 Func lexemeLower $ braces $ parseTerm `sepBy` char ',') <|> parseStroke
+        parseStroke = liftM Stroke (liftM2 const parseFunc $ char '\'') <|> parseVar
+        parseVar = (char '0' >> return Zero) <|> liftM Var lexemeLower <|> braces parseTerm
 
-many :: Parser a -> Parser [a]
-many prs = once prs `mplus` return []
+parseFormula :: Stream s m Char => ParsecT s u m Expression
+parseFormula = parseImpl
+    where
+        parseImpl = liftM (foldr1 (-->)) $ parseOr `sepBy1` string "->"
+        parseOr = liftM (foldl1 (|||)) $ parseAnd `sepBy1` char '|'
+        parseAnd = liftM (foldl1 (&&&)) $ parseNot `sepBy1` char '&'
+        parseNot = (liftM Not $ char '!' >> parseNot) <|> parseForall
+        parseForall = (char '@' >> liftM2 Forall lexemeLower parseForall) <|> parseExist
+        parseExist = (char '?' >> liftM2 Exist lexemeLower parseForall) <|> parsePredicate
+        parsePredicate = (lexemeUpper >>= \lex -> (liftM (Predicate lex) $ braces $ parseTerm `sepBy` char ',') <|> (return $ Gap lex)) <|> braces parseFormula
 
-once prs = do
-    first <- prs
-    rem <- many prs
-    return (first:rem)
+parseProof :: Stream s m Char => ParsecT s u m [Expression]
+parseProof = many1 $ liftM2 const parseFormula endOfLine
 
-parseImpl :: Parser Expression
+parseHeading :: Stream s m Char => ParsecT s u m ([Expression], Expression)
+parseHeading = liftM2 (,) (parseFormula `sepBy` char ',') $ string "|-" >> parseFormula
 
-brackets = do
-    char '('
-    res <- parseImpl
-    char ')'
-    return res
-
-varName = (fmap Var $ allowChars isAlphaNum) `mplus` brackets
-
-parseNot = (do
-    char '!'
-    par <- parseNot
-    return $ Not par) `mplus` varName
-
-parseAnd = do
-    left <- parseNot
-    (do
-        right <- once $ char '&' >> parseNot
-        return $ foldl (&&&) left right
-        ) `mplus` return left
-
-parseOr = do
-    left <- parseAnd
-    (do
-        right <- once $ char '|' >> parseAnd
-        return $ foldl (|||) left right
-        ) `mplus` return left
-
-parseImpl = do
-    left <- parseOr
-    (do
-        right <- char '-' >> char '>' >> parseImpl
-        return $ left --> right
-        ) `mplus` return left
-
-parseExpr :: ByteString -> Maybe Expression
-parseExpr s = fmap fst $ runStateT parseImpl s
-
-heading :: Parser ([Expression], Expression)
-heading = do
-    fst <- parseImpl
-    rem <- many $ char ',' >> parseImpl
-    char '|' >> char '-'
-    res <- parseImpl
-    return (fst:rem, res)
-
-parseHead :: ByteString -> Maybe ([Expression], Expression)
-parseHead s = fmap fst $ runStateT heading s
+parseFile :: Stream s m Char => ParsecT s u m (([Expression], Expression), [Expression])
+parseFile = liftM2 (,) (liftM2 const parseHeading endOfLine) parseProof

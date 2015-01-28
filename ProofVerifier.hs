@@ -3,21 +3,21 @@
 import Prelude hiding (readFile, null)
 
 import Data.List hiding (null)
-import Data.Char
-import Data.ByteString.Char8 (readFile, splitWith, null)
-import Data.Maybe
 
 import System.Environment
 
 import Control.Monad
-import Control.Monad.ST
+import Control.Monad.Trans.State
+
+import Text.Parsec.ByteString
 
 import ExpressionParser
 import Proof
+import Axioms
 import ProofUtils
 
 main = do
     [fin, fout] <- getArgs
-    inputData <- liftM (map (fromJust . parseExpr) . filter (not . null) . splitWith isSpace) $ readFile fin
-    let output = getLoggedProof $ runST $ getLog $ liftM last $ forM inputData tellEx
-    writeFile fout $ concatMap (++ "\n") $ map show output
+    Right inputData <- parseFromFile parseProof fin
+    let Right proof = flip evalStateT (initBuilder $ basicAxioms ++ [classicAxiom]) $ forM inputData tryTell
+    writeFile fout $ concatMap (++ "\n") $ map show $ getLoggedProof proof

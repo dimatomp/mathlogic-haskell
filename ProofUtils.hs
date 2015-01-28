@@ -2,36 +2,32 @@
 
 module ProofUtils where
 
-import Prelude hiding (lookup)
+import Prelude
 
-import Expression hiding (getNumber)
+import Expression
 import Axioms
 import Proof
 
 import Data.Maybe
+import Data.Map hiding (foldl)
 
 import Control.Monad
-import Control.Monad.ST
-import Control.Monad.Trans
-import Control.Monad.Trans.Cont
-
-import Data.HashTable.ST.Basic
 
 data NumberedStatement = NumUnproved Expression Int
-                       | NumAxiom Expression Int
+                       | NumAxiom Expression Int Int
                        | NumModusPonens Expression Int Int Int
 
 getNumber (NumUnproved _ num) = num
-getNumber (NumAxiom _ num) = num
+getNumber (NumAxiom _ _ num) = num
 getNumber (NumModusPonens _ _ _ num) = num
 
 showPref expr num = "(" ++ show num ++ ") " ++ show expr ++ " "
 
 instance Show NumberedStatement where
     show (NumUnproved expr num) = showPref expr num ++ "(Не доказано)"
-    show (NumAxiom expr num) = showPref expr num ++ "(Сх. акс. " ++ show (fromJust $ getClassicAxiom expr) ++ ")"
+    show (NumAxiom expr axiom num) = showPref expr num ++ "(Сх. акс. " ++ show axiom ++ ")"
     show (NumModusPonens expr l r num) = showPref expr num ++ "(M.P. " ++ show l ++ ", " ++ show r ++ ")"
-
+{-
 getNumberedProof :: ProofStatement -> [NumberedStatement]
 getNumberedProof stmt = runST $ do
     table <- new :: ST s (HashTable s Expression Int)
@@ -52,15 +48,15 @@ getNumberedProof stmt = runST $ do
             else return ([], num)
     result <- runContT (dfs stmt 1) $ return . fst
     return $ reverse result
+    -}
 
 getLoggedProof :: [Either Expression ProofStatement] -> [NumberedStatement]
-getLoggedProof list = runST $ do
-    table <- new :: ST s (HashTable s Expression Int)
-    forM (zip [1 .. length list] list) $ \(num, result) -> case result of
-        Left expr -> insert table expr num >> return (NumUnproved expr num)
-        Right (Axiom expr) -> insert table expr num >> return (NumAxiom expr num)
-        Right (ModusPonens expr left right) -> do
-            Just nLeft <- lookup table $ getExpression left
-            Just nRight <- lookup table $ getExpression right
-            insert table expr num
-            return $ NumModusPonens expr nLeft nRight num
+getLoggedProof list =
+    let process (num, map, res) (Left expr) = (num + 1, map, NumUnproved expr num : res)
+        process (num, map, res) (Right (AxiomStatement expr axiom)) = (num + 1, insert expr num map, NumAxiom expr axiom num : res)
+        process (num, map, res) (Right (ModusPonens expr left right)) =
+            let leftNum = map ! getExpression left
+                rightNum = map ! getExpression right
+            in (num + 1, insert expr num map, NumModusPonens expr leftNum rightNum num : res)
+        (_, _, result) = foldl process (1, empty, []) list
+    in reverse result
