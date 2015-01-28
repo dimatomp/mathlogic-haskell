@@ -1,6 +1,6 @@
 {-# LANGUAGE NoImplicitPrelude, FlexibleContexts #-}
 
-module ExpressionParser  where
+module ExpressionParser where
 
 import Prelude
 
@@ -10,10 +10,13 @@ import Text.Parsec
 import Text.Parsec.Char
 import Text.Parsec.Combinator
 
+--import Debug.Trace
+
 import Control.Monad
-import Control.Monad.Identity
 
 import Expression
+
+trace _ = id
 
 lexemeLower :: Stream s m Char => ParsecT s u m String
 lexemeLower = liftM2 (:) lower $ many digit
@@ -27,22 +30,27 @@ braces = between (char '(') (char ')')
 parseTerm :: Stream s m Char => ParsecT s u m Function
 parseTerm = parsePlus
     where
-        parsePlus = liftM (foldl1 (+++)) $ parseMult `sepBy1` char '+'
-        parseMult = liftM (foldl1 (***)) $ parseFunc `sepBy1` char '*'
-        parseFunc = (liftM2 Func lexemeLower $ braces $ parseTerm `sepBy` char ',') <|> parseStroke
-        parseStroke = liftM Stroke (liftM2 const parseFunc $ char '\'') <|> parseVar
-        parseVar = (char '0' >> return Zero) <|> liftM Var lexemeLower <|> braces parseTerm
+        parsePlus = trace "parsePlus" $ liftM (foldl1 (+++)) $ parseMult `sepBy1` char '+'
+        parseMult = trace "parseMult" $ liftM (foldl1 (***)) $ parseStroke `sepBy1` char '*'
+        parseStroke = trace "parseStroke" $ do
+            applyTo <- parseFunc
+            howMuch <- liftM length $ many $ char '\''
+            return $ iterate Stroke applyTo !! howMuch
+        parseFunc = trace "parseFunc" $ (lexemeLower >>= \str -> (liftM (Func str) $ braces $ parseTerm `sepBy1` char ',') <|> return (Var str)) <|> parseZero
+        parseZero = trace "parseZero" $ (char '0' >> return Zero) <|> try (braces parseTerm)
 
 parseFormula :: Stream s m Char => ParsecT s u m Expression
 parseFormula = parseImpl
     where
-        parseImpl = liftM (foldr1 (-->)) $ parseOr `sepBy1` string "->"
-        parseOr = liftM (foldl1 (|||)) $ parseAnd `sepBy1` char '|'
-        parseAnd = liftM (foldl1 (&&&)) $ parseNot `sepBy1` char '&'
-        parseNot = (liftM Not $ char '!' >> parseNot) <|> parseForall
-        parseForall = (char '@' >> liftM2 Forall lexemeLower parseForall) <|> parseExist
-        parseExist = (char '?' >> liftM2 Exist lexemeLower parseForall) <|> parsePredicate
-        parsePredicate = (lexemeUpper >>= \lex -> (liftM (Predicate lex) $ braces $ parseTerm `sepBy` char ',') <|> (return $ Gap lex)) <|> braces parseFormula
+        trySepBy1 p c = p >>= \fst -> try (c >> trySepBy1 p c >>= return . (fst:)) <|> return [fst]
+        parseImpl = trace "parseImpl" $ liftM (foldr1 (-->)) $ parseOr `sepBy1` string "->"
+        parseOr = trace "parseOr" $ liftM (foldl1 (|||)) $ parseAnd `trySepBy1` char '|'
+        parseAnd = trace "parseAnd" $ liftM (foldl1 (&&&)) $ parseNot `sepBy1` char '&'
+        parseNot = trace "parseNot" $ (liftM Not $ char '!' >> parseNot) <|> parseForall
+        parseForall = trace "parseForall" $ (char '@' >> liftM2 Forall lexemeLower parseNot) <|> parseExist
+        parseExist = trace "parseExist" $ (char '?' >> liftM2 Exist lexemeLower parseNot) <|> parsePredicate
+        parsePredicate = trace "parsePredicate" $ (lexemeUpper >>= \lex -> (liftM (Predicate lex) $ braces $ parseTerm `sepBy1` char ',') <|> (return $ Gap lex)) <|> parseEqual
+        parseEqual = trace "parseEqual" $ (liftM2 Equal parseTerm $ char '=' >> parseTerm) <|> braces parseFormula
 
 parseProof :: Stream s m Char => ParsecT s u m [Expression]
 parseProof = many1 $ liftM2 const parseFormula endOfLine
