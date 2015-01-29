@@ -28,6 +28,10 @@ instance Show Function where
     showsPrec _ (Var s) = showString s
     showsPrec n (Mult l r) = showParen (n > 6) $ showsPrec 6 l . showChar '*' . showsPrec 7 r
     showsPrec n (Plus l r) = showParen (n > 5) $ showsPrec 5 l . showChar '+' . showsPrec 6 r
+    showsPrec _ (Func s list) = showString s . showChar '(' . showList list . showChar ')'
+        where
+            showList [expr] = shows expr
+            showList (f:s) = shows f . showChar ',' . showList s
     showsPrec _ Zero = showChar '0'
 
 data Expression = Gap String
@@ -108,6 +112,7 @@ matchWith e1 e2 = runStateT (matchesMaybe [] e1 e2) Nothing
         isSafe list (Var n) = not $ n `elem` list
         isSafe list (Plus l r) = isSafe list l && isSafe list r
         isSafe list (Mult l r) = isSafe list l && isSafe list r
+        isSafe list (Func s args) = all (isSafe list) args
         isSafe _ Zero = True
 
         matchesFunc :: [(String, String)] -> Function -> Function -> StateT (Maybe ErrorMessage) Maybe [(String, Function)]
@@ -124,6 +129,9 @@ matchWith e1 e2 = runStateT (matchesMaybe [] e1 e2) Nothing
         matchesFunc t (Stroke e1) (Stroke e2) = matchesFunc t e1 e2
         matchesFunc t (Plus l1 r1) (Plus l2 r2) = bind2 mergeFunc (matchesFunc t l1 l2) (matchesFunc t r1 r2)
         matchesFunc t (Mult l1 r1) (Mult l2 r2) = bind2 mergeFunc (matchesFunc t l1 l2) (matchesFunc t r1 r2)
+        matchesFunc t (Func s1 l1) (Func s2 l2)
+            | s1 == s2 = zipWithM (matchesFunc t) l1 l2 >>= foldM mergeFunc []
+            | otherwise = mzero
         matchesFunc _ _ _ = mzero
 
         merge (e1, f1) (e2, f2) = do
@@ -148,6 +156,7 @@ hasOccurFunc s (Var n) = s == n
 hasOccurFunc s (Stroke l) = hasOccurFunc s l
 hasOccurFunc s (Plus l r) = hasOccurFunc s l || hasOccurFunc s r
 hasOccurFunc s (Mult l r) = hasOccurFunc s l || hasOccurFunc s r
+hasOccurFunc s (Func _ p) = any (hasOccurFunc s) p
 hasOccurFunc _ Zero = False
 
 hasOccurrences :: String -> Expression -> Bool

@@ -10,13 +10,13 @@ import Text.Parsec
 import Text.Parsec.Char
 import Text.Parsec.Combinator
 
---import Debug.Trace
+import Debug.Trace
 
 import Control.Monad
 
 import Expression
 
-trace _ = id
+--trace _ = id
 
 lexemeLower :: Stream s m Char => ParsecT s u m String
 lexemeLower = liftM2 (:) lower $ many digit
