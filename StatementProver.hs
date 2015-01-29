@@ -9,8 +9,7 @@ import Data.ByteString.Char8 (unpack)
 
 import System.Environment
 
-import Control.Monad
-import Control.Monad.Trans.State
+import Control.Monad.State
 
 import ExpressionParser
 import Proof

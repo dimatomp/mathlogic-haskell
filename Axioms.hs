@@ -67,11 +67,13 @@ arithAxioms = map justMatch [
     where
         lastScheme input@(Implication (And a (Forall x (Implication b c))) b') = do
             guardU $ b == b'
-            ((expr, func), _) <- eitherMatch b a
+            ((expr, func), err) <- eitherMatch b a
+            guardU $ isNothing err
             guardU $ all (\(k, v) -> v == Gap k) expr
             guardU $ (x, Zero) `elem` func
             guardU $ all (\(k, v) -> k == x || v == Var k) func
-            ((expr, func), _) <- eitherMatch b c
+            ((expr, func), err) <- eitherMatch b c
+            guardU $ isNothing err
             guardU $ all (\(k, v) -> v == Gap k) expr
             guardU $ (x, Stroke (Var x)) `elem` func
             guardU $ all (\(k, v) -> k == x || v == Var k) func

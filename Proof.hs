@@ -69,9 +69,9 @@ getLog = gets $ \(top:_) -> reverse $ case top of
 
 tellRec :: [ProofBuilder] -> Expression -> Either (Int, ErrorReport) (ProofStatement, [ProofBuilder])
 tellRec [Root axioms proved mp log] expr =
-    let wrap = Left . (length log,)
-        wrapMaybe (Just res) = Right res
-        wrapMaybe Nothing = wrap Nothing
+    let wrapMaybe (Just res) = Right res
+        wrapMaybe Nothing = Left (length log, Nothing)
+        wrap a = Left (length log, Just a)
         checkProved = wrapMaybe $ lookup expr proved
         tryAxioms = do
             number <- esum $ zipWith (\num f -> mapBoth (length log,) (const num) (f expr)) [1..] axioms
@@ -84,13 +84,13 @@ tellRec [Root axioms proved mp log] expr =
         tryPredicates = case expr of
             Implication (Exist x a) b -> do
                 from <- wrapMaybe $ lookup (a --> b) proved
-                when (hasOccurrences x b) $ wrap $ Just $ FreeOccurrence x b
+                when (hasOccurrences x b) $ wrap $ FreeOccurrence x b
                 return $ Exists expr from
             Implication a (Forall x b) -> do
                 from <- wrapMaybe $ lookup (a --> b) proved
-                when (hasOccurrences x a) $ wrap $ Just $ FreeOccurrence x a
+                when (hasOccurrences x a) $ wrap $ FreeOccurrence x a
                 return $ Any expr from
-            _ -> wrap Nothing
+            _ -> wrapMaybe Nothing
     in do
         result <- trace ("1: " ++ show expr) $ checkProved `eplus` tryAxioms `eplus` tryMP `eplus` tryPredicates
         let newProved = insert expr result proved
@@ -98,16 +98,16 @@ tellRec [Root axioms proved mp log] expr =
                 Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (L.insert l list) mp
                 _ -> mp
         trace ("1: Success") $ return (result, [Root axioms newProved newMP (result:log)])
-tellRec stack@(Assumption supp mp log : tail) expr =
-    let wrap = Left . (length log,)
-        wrapMaybe (Just res) = Right res
-        wrapMaybe Nothing = wrap Nothing
+tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (length log, err)) $
+    let wrapMaybe (Just res) = Right res
+        wrapMaybe Nothing = Left (length log, Nothing)
+        wrap a = Left (length log, Just a)
         retrieve expr =
             let grown = foldl (flip (-->)) expr $ map (\(Assumption s _ _) -> s) $ init stack
                 Root _ table _ _ = last tail
             in trace ("Checking for " ++ show grown) $ liftM (, tail) $ wrapMaybe $ lookup grown table
         itsMe = do
-            when (expr /= supp) $ wrap Nothing
+            when (expr /= supp) $ wrapMaybe Nothing
             (_, tail) <- tellRec tail $ expr --> expr --> expr
             (_, tail) <- tellRec tail $ expr --> (expr --> expr) --> expr
             (_, tail) <- tellRec tail $ (expr --> (expr --> expr)) --> (expr --> (expr --> expr) --> expr) --> expr --> expr
@@ -134,15 +134,15 @@ tellRec stack@(Assumption supp mp log : tail) expr =
         tryPredicates = case expr of
             Implication (Exist x a) b -> do
                 retrieve $ a --> b
-                when (hasOccurrences x b) $ wrap $ Just $ FreeOccurrence x b
-                when (hasOccurrences x supp) $ wrap $ Just $ BadRuleUsage x supp
+                when (hasOccurrences x b) $ wrap $ FreeOccurrence x b
+                when (hasOccurrences x supp) $ wrap $ BadRuleUsage x supp
                 (_, tail) <- runStateT (swapArgs supp a b) tail
                 (_, tail) <- tellRec tail $ Exist x a --> supp --> b
                 runStateT (swapArgs (Exist x a) supp b) tail
             Implication a (Forall x b) -> do
                 retrieve $ a --> b
-                when (hasOccurrences x a) $ wrap $ Just $ FreeOccurrence x a
-                when (hasOccurrences x supp) $ wrap $ Just $ BadRuleUsage x supp
+                when (hasOccurrences x a) $ wrap $ FreeOccurrence x a
+                when (hasOccurrences x supp) $ wrap $ BadRuleUsage x supp
                 (_, tail) <- flip runStateT tail $ assume (supp &&& a) $ do
                     tellEx $ supp &&& a
                     tellEx $ supp &&& a --> supp
@@ -161,7 +161,7 @@ tellRec stack@(Assumption supp mp log : tail) expr =
                     tellEx $ supp &&& a
                     tellEx $ supp &&& a --> Forall x b
                     tellEx $ Forall x b
-            _ -> wrap Nothing
+            _ -> wrapMaybe Nothing
     in do
         (result, tail) <- trace (show (length stack) ++ ": " ++ show expr) $
             retrieve expr `eplus` itsMe `eplus` whoKnows `eplus` tryMP `eplus` tryPredicates

@@ -119,16 +119,17 @@ matchWith e1 e2 = runStateT (matchesMaybe [] e1 e2) Nothing
         isSafe list (Func s args) = all (isSafe list) args
         isSafe _ Zero = True
 
-        matchesFunc :: [(B.ByteString, B.ByteString)] -> Function -> Function -> StateT (Maybe ErrorMessage) Maybe [(B.ByteString, Function)]
+        matchesFunc :: [B.ByteString] -> Function -> Function -> StateT (Maybe ErrorMessage) Maybe [(B.ByteString, Function)]
         matchesFunc _ Zero Zero = return []
-        matchesFunc t (Var n) res@(Var m) = mapM checkForFail t >>= foldr mplus (return [(n, res)])
-            where
-                checkForFail (s1, s2)
-                    | s1 == n || s2 == m = if s1 == n && s2 == m then return $ return [] else mzero
-                    | otherwise = return mzero
+        matchesFunc t (Var n) res@(Var m)
+            | n == m = return $ if n `elem` t then [] else [(n, res)]
+            | otherwise = do
+                guard $ not $ n `elem` t
+                when (m `elem` t) $ put $ Just $ UnsafeForSubst res e1 n
+                return [(n, res)]
         matchesFunc t (Var n) res = do
-            forM_ t $ guard . (n /=) . fst
-            when (not $ isSafe (map fst t) res) $ put $ Just $ UnsafeForSubst res e1 n
+            guard $ not $ n `elem` t
+            when (not $ isSafe t res) $ put $ Just $ UnsafeForSubst res e1 n
             return [(n, res)]
         matchesFunc t (Stroke e1) (Stroke e2) = matchesFunc t e1 e2
         matchesFunc t (Plus l1 r1) (Plus l2 r2) = bind2 mergeFunc (matchesFunc t l1 l2) (matchesFunc t r1 r2)
@@ -148,12 +149,13 @@ matchWith e1 e2 = runStateT (matchesMaybe [] e1 e2) Nothing
         matchesMaybe t (Or l1 r1) (Or l2 r2) = bind2 merge (matchesMaybe t l1 l2) (matchesMaybe t r1 r2)
         matchesMaybe t (Implication l1 r1) (Implication l2 r2) = bind2 merge (matchesMaybe t l1 l2) (matchesMaybe t r1 r2)
         matchesMaybe t (Not p1) (Not p2) = matchesMaybe t p1 p2
-        matchesMaybe t (Forall s1 e1) (Forall s2 e2) = matchesMaybe ((s1, s2):t) e1 e2
-        matchesMaybe t (Exist s1 e1) (Exist s2 e2) = matchesMaybe ((s1, s2):t) e1 e2
+        matchesMaybe t (Forall s1 e1) (Forall s2 e2) = matchesMaybe (s1:t) e1 e2
+        matchesMaybe t (Exist s1 e1) (Exist s2 e2) = matchesMaybe (s1:t) e1 e2
         matchesMaybe t (Equal a b) (Equal c d) = liftM (\l -> ([], l)) $ bind2 mergeFunc (matchesFunc t a c) (matchesFunc t b d)
-        matchesMaybe t (Predicate s1 l1) (Predicate s2 l2)
-            | s1 == s2 = liftM (\l -> ([], l)) $ zipWithM (matchesFunc t) l1 l2 >>= foldM mergeFunc []
-            | otherwise = mzero
+        matchesMaybe t (Predicate s1 l1) (Predicate s2 l2) = do
+            guard $ s1 == s2
+            l <- zipWithM (matchesFunc t) l1 l2 >>= foldM mergeFunc []
+            return ([], l)
         matchesMaybe _ _ _ = mzero
 
 hasOccurFunc s (Var n) = s == n
