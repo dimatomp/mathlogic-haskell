@@ -4,6 +4,7 @@ module Expression where
 
 import Data.Maybe
 import Data.List
+import Data.Hashable
 
 import Control.Monad
 import Control.Monad.Trans.State
@@ -53,6 +54,25 @@ instance Show Expression where
         where
             showParam [expr] = shows expr
             showParam (f:s) = shows f . showChar ',' . showParam s
+
+instance Hashable Function where
+    hashWithSalt p (Stroke f) = hashWithSalt p f * p + 1
+    hashWithSalt p (Mult l r) = hashWithSalt p l * p * p + hashWithSalt p r * p + 2
+    hashWithSalt p (Plus l r) = hashWithSalt p l * p * p + hashWithSalt p r * p + 3
+    hashWithSalt p (Func e l) = foldr ((+) . (* p) . hashWithSalt p) (hashWithSalt p e) l * p + 4
+    hashWithSalt p (Var s) = hashWithSalt p s * p + 5
+    hashWithSalt p Zero = 6
+
+instance Hashable Expression where
+    hashWithSalt p (Gap s) = hashWithSalt p s * p + 7
+    hashWithSalt p (Not a) = hashWithSalt p a * p + 8
+    hashWithSalt p (And l r) = hashWithSalt p l * p * p + hashWithSalt p r * p + 9
+    hashWithSalt p (Or l r) = hashWithSalt p l * p * p + hashWithSalt p r * p + 10
+    hashWithSalt p (Implication l r) = hashWithSalt p l * p * p + hashWithSalt p r * p + 11
+    hashWithSalt p (Forall x e) = hashWithSalt p e * p * p + hashWithSalt p x * p + 12
+    hashWithSalt p (Exist x e) = hashWithSalt p e * p * p + hashWithSalt p x * p + 13
+    hashWithSalt p (Equal l r) = hashWithSalt p l * p * p + hashWithSalt p r * p + 14
+    hashWithSalt p (Predicate s l) = foldr ((+) . (* p) . hashWithSalt p) (hashWithSalt p s) l * p + 15
 
 infixl 6 ***
 infixl 5 +++

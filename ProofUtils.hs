@@ -27,28 +27,20 @@ instance Show NumberedStatement where
     show (NumUnproved expr num) = showPref expr num ++ "(Не доказано)"
     show (NumAxiom expr axiom num) = showPref expr num ++ "(Сх. акс. " ++ show axiom ++ ")"
     show (NumModusPonens expr l r num) = showPref expr num ++ "(M.P. " ++ show l ++ ", " ++ show r ++ ")"
-{-
+
 getNumberedProof :: ProofStatement -> [NumberedStatement]
-getNumberedProof stmt = runST $ do
-    table <- new :: ST s (HashTable s Expression Int)
-    let dfs (Axiom expr) num = do
-            exist <- lift $ lookup table expr
-            if isNothing exist
-                then lift (insert table expr num) >> return ([NumAxiom expr num], num + 1)
-                else return ([], num)
-        dfs (ModusPonens expr left right) num = do
-            exist <- lift $ lookup table expr
-            if isNothing exist then do
-                (lList, num) <- dfs left num
-                (rList, num) <- dfs right num
-                lift $ insert table expr num
-                lNum <- lift $ lookup table $ getExpression left
-                rNum <- lift $ lookup table $ getExpression right
-                return ([NumModusPonens expr (fromJust lNum) (fromJust rNum) num] ++ rList ++ lList, num + 1)
-            else return ([], num)
-    result <- runContT (dfs stmt 1) $ return . fst
-    return $ reverse result
-    -}
+getNumberedProof stmt =
+    let process (num, map, res) stmt = if getExpression stmt `member` map
+            then (num, map, res)
+            else case stmt of
+                AxiomStatement expr axiom -> (num + 1, insert expr num map, NumAxiom expr axiom num : res)
+                ModusPonens expr left right ->
+                    let (nNum, nMap, nRes) = (`process` right) $ process (num, map, res) left
+                        leftNum = nMap ! getExpression left
+                        rightNum = nMap ! getExpression right
+                    in (nNum + 1, insert expr nNum nMap, NumModusPonens expr leftNum rightNum nNum : nRes)
+        (_, _, result) = process (1, empty, []) stmt
+    in reverse result
 
 getLoggedProof :: [Either Expression ProofStatement] -> [NumberedStatement]
 getLoggedProof list =

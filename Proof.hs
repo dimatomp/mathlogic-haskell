@@ -4,7 +4,7 @@ module Proof where
 
 import Prelude hiding (lookup)
 
-import Data.Map hiding (foldl, foldr, map)
+import Data.HashMap.Strict hiding (foldl, foldr, map)
 import Data.Maybe
 import qualified Data.List as L
 
@@ -23,8 +23,8 @@ data ProofStatement = AxiomStatement { getExpression :: Expression, getNum :: In
 instance Show ProofStatement where
     show = show . getExpression
 
-data ProofBuilder = Root [Axiom] (Map Expression ProofStatement) (Map Expression [Expression]) [ProofStatement]
-                  | Assumption Expression (Map Expression [Expression]) [Expression]
+data ProofBuilder = Root [Axiom] (HashMap Expression ProofStatement) (HashMap Expression [Expression]) [ProofStatement]
+                  | Assumption Expression (HashMap Expression [Expression]) [Expression]
 
 initBuilder :: [Axiom] -> [ProofBuilder]
 initBuilder axioms = [Root axioms empty empty []]
