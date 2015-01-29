@@ -5,6 +5,7 @@ import Proof
 
 import Data.List
 import Data.Maybe
+import Data.ByteString.Char8 (ByteString)
 
 import Control.Monad
 
@@ -301,7 +302,7 @@ proveStmt toBeProved@(Not param) = case param of
     _ -> tellEx toBeProved
 proveStmt toBeProved = tellEx toBeProved
 
-traceExpr :: Expression -> Maybe [(String, Bool)]
+traceExpr :: Expression -> Maybe [(ByteString, Bool)]
 traceExpr expr =
     let gather (Gap s) = [s]
         gather (Not p) = gather p

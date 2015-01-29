@@ -6,6 +6,8 @@ import Data.Maybe
 import Data.List
 import Data.Hashable
 
+import qualified Data.ByteString.Char8 as B
+
 import Control.Monad
 import Control.Monad.Trans.State
 
@@ -18,43 +20,45 @@ bind2 f ma mb = do
 data Function = Stroke Function
               | Mult Function Function
               | Plus Function Function
-              | Func String [Function]
-              | Var String
+              | Func B.ByteString [Function]
+              | Var B.ByteString
               | Zero
               deriving (Eq, Ord)
 
+showB = showString . B.unpack
+
 instance Show Function where
     showsPrec _ (Stroke p) = showsPrec 7 p . showChar '\''
-    showsPrec _ (Var s) = showString s
+    showsPrec _ (Var s) = showB s
     showsPrec n (Mult l r) = showParen (n > 6) $ showsPrec 6 l . showChar '*' . showsPrec 7 r
     showsPrec n (Plus l r) = showParen (n > 5) $ showsPrec 5 l . showChar '+' . showsPrec 6 r
-    showsPrec _ (Func s list) = showString s . showChar '(' . showList list . showChar ')'
+    showsPrec _ (Func s list) = showB s . showChar '(' . showList list . showChar ')'
         where
             showList [expr] = shows expr
             showList (f:s) = shows f . showChar ',' . showList s
     showsPrec _ Zero = showChar '0'
 
-data Expression = Gap String
+data Expression = Gap B.ByteString
                 | Not Expression
                 | And Expression Expression
                 | Or Expression Expression
                 | Implication Expression Expression
-                | Forall String Expression
-                | Exist String Expression
+                | Forall B.ByteString Expression
+                | Exist B.ByteString Expression
                 | Equal Function Function
-                | Predicate String [Function]
+                | Predicate B.ByteString [Function]
                 deriving (Eq, Ord)
 
 instance Show Expression where
-    showsPrec _ (Gap n) = showString n
+    showsPrec _ (Gap n) = showB n
     showsPrec _ (Not p) = showChar '!' . showsPrec 5 p
     showsPrec n (And l r) = showParen (n > 3) $ showsPrec 3 l . showChar '&' . showsPrec 4 r
     showsPrec n (Or l r) = showParen (n > 2) $ showsPrec 2 l . showChar '|' . showsPrec 3 r
     showsPrec n (Implication l r) = showParen (n > 1) $ showsPrec 2 l . showString "->" . showsPrec 1 r
-    showsPrec _ (Forall s e) = showChar '@' . showString s . showsPrec 7 e
-    showsPrec _ (Exist s e) = showChar '?' . showString s . showsPrec 7 e
+    showsPrec _ (Forall s e) = showChar '@' . showB s . showsPrec 7 e
+    showsPrec _ (Exist s e) = showChar '?' . showB s . showsPrec 7 e
     showsPrec _ (Equal f1 f2) = shows f1 . showChar '=' . shows f2
-    showsPrec _ (Predicate s list) = showString s . showChar '(' . showParam list . showChar ')'
+    showsPrec _ (Predicate s list) = showB s . showChar '(' . showParam list . showChar ')'
         where
             showParam [expr] = shows expr
             showParam (f:s) = shows f . showChar ',' . showParam s
@@ -91,23 +95,23 @@ infixr 1 -->
 (|||) = Or
 (-->) = Implication
 
-data ErrorMessage = UnsafeForSubst Function Expression String
-                  | FreeOccurrence String Expression
-                  | BadRuleUsage String Expression
+data ErrorMessage = UnsafeForSubst Function Expression B.ByteString
+                  | FreeOccurrence B.ByteString Expression
+                  | BadRuleUsage B.ByteString Expression
                   deriving Show
 
 matches = (isJust .) . matchWith
 
-matchWith :: Expression -> Expression -> Maybe (([(String, Expression)], [(String, Function)]), Maybe ErrorMessage)
+matchWith :: Expression -> Expression -> Maybe (([(B.ByteString, Expression)], [(B.ByteString, Function)]), Maybe ErrorMessage)
 matchWith e1 e2 = runStateT (matchesMaybe [] e1 e2) Nothing
     where
-        mergeFunc :: (Eq a, MonadPlus m) => [(String, a)] -> [(String, a)] -> m [(String, a)]
+        mergeFunc :: (Eq a, MonadPlus m) => [(B.ByteString, a)] -> [(B.ByteString, a)] -> m [(B.ByteString, a)]
         mergeFunc l1 l2 = (forM_ l1 $ \(k, v) ->
             case lookup k l2 of
                 Just v2 -> guard $ v == v2
                 Nothing -> return ()) >> return (union l1 l2)
 
-        isSafe :: [String] -> Function -> Bool
+        isSafe :: [B.ByteString] -> Function -> Bool
         isSafe list (Stroke f) = isSafe list f
         isSafe list (Var n) = not $ n `elem` list
         isSafe list (Plus l r) = isSafe list l && isSafe list r
@@ -115,7 +119,7 @@ matchWith e1 e2 = runStateT (matchesMaybe [] e1 e2) Nothing
         isSafe list (Func s args) = all (isSafe list) args
         isSafe _ Zero = True
 
-        matchesFunc :: [(String, String)] -> Function -> Function -> StateT (Maybe ErrorMessage) Maybe [(String, Function)]
+        matchesFunc :: [(B.ByteString, B.ByteString)] -> Function -> Function -> StateT (Maybe ErrorMessage) Maybe [(B.ByteString, Function)]
         matchesFunc _ Zero Zero = return []
         matchesFunc t (Var n) res@(Var m) = mapM checkForFail t >>= foldr mplus (return [(n, res)])
             where
@@ -159,7 +163,7 @@ hasOccurFunc s (Mult l r) = hasOccurFunc s l || hasOccurFunc s r
 hasOccurFunc s (Func _ p) = any (hasOccurFunc s) p
 hasOccurFunc _ Zero = False
 
-hasOccurrences :: String -> Expression -> Bool
+hasOccurrences :: B.ByteString -> Expression -> Bool
 hasOccurrences s (And l r) = hasOccurrences s l || hasOccurrences s r
 hasOccurrences s (Or l r) = hasOccurrences s l || hasOccurrences s r
 hasOccurrences s (Implication l r) = hasOccurrences s l || hasOccurrences s r

@@ -1,104 +1,85 @@
-{-# LANGUAGE NoImplicitPrelude, FlexibleContexts, NoMonomorphismRestriction #-}
+{-# LANGUAGE NoImplicitPrelude, TupleSections #-}
 
-module ExpressionParser where
+module ExpressionParser (parseTerm, parseFormula, parseProof, parseHeading, parseWhole, parseFromFile) where
 
 import Prelude
 
-import Data.List
+import Data.Char (isDigit, isLower, isUpper, isSpace)
+import Data.Maybe
 
-import Text.Parsec
-import Text.Parsec.Char
-import Text.Parsec.Combinator
-import Text.Parsec.Token
-import Text.Parsec.Expr
-
+import Control.Applicative ((<|>), some, many)
 import Control.Monad
+import Control.Monad.Trans.State
+
+import qualified Data.ByteString.Char8 as B
 
 import Expression
 
 import Debug.Trace
 --trace _ = id
 
-lexemeLower = liftM2 (:) lower $ many digit
+type Parser = StateT B.ByteString Maybe
 
-lexemeUpper = liftM2 (:) upper $ many digit
+allowChar :: (Char -> Bool) -> Parser Char
+allowChar f = StateT $ \str -> if not $ B.null str
+    then let Just res@(c, rem) = B.uncons str in if f c then return res else mzero
+    else mzero
 
-languageDef = defaultDef { whiteSpace = endOfLine >> return () }
+allowMany :: (Char -> Bool) -> Parser B.ByteString
+allowMany f = StateT $ \str -> return $ B.span f str
+
+char :: Char -> Parser ()
+char = (>> return ()) . allowChar . (==)
+
+lowercase :: Parser B.ByteString
+lowercase = liftM2 B.cons (allowChar isLower) $ allowMany isDigit
+
+uppercase :: Parser B.ByteString
+uppercase = liftM2 B.cons (allowChar isUpper) $ allowMany isDigit
+
+sepBy :: Parser a -> String -> Parser [a]
+sepBy p s = p >>= \res -> (forM_ s char >> liftM (res:) (sepBy p s)) <|> return [res]
+
+braces :: Parser a -> Parser a
+braces p = char '(' >> liftM2 const p (char ')')
+
+parseTerm :: Parser Function
+parseTerm = parsePlus
     where
-        defaultDef = makeTokenParser $ LanguageDef {
-            commentStart = "",
-            commentEnd = "",
-            commentLine = "",
-            nestedComments = True,
-            identStart = parserZero,
-            identLetter = parserZero,
-            opStart = oneOf "-|&!@?+*'",
-            opLetter = oneOf ">-",
-            reservedNames = ["0"],
-            reservedOpNames = ["+", "*", "'", "=", "->", "|", "&", "!", "@", "?", "|-"],
-            caseSensitive = True
-        }
+        parsePlus = liftM (foldl1 (+++)) $ parseMult `sepBy` "+"
+        parseMult = liftM (foldl1 (***)) $ parseStroke `sepBy` "*"
+        parseStroke = do
+            arg <- parseFunc
+            strokes <- liftM (foldl (.) id) $ many $ char '\'' >> return Stroke
+            return $ strokes arg
+        parseFunc = (lowercase >>= \name -> (liftM (Func name) $ braces $ parseTerm `sepBy` ",") <|> return (Var name)) <|> parseZero
+        parseZero = (char '0' >> return Zero) <|> braces parseTerm
 
-mReservedOp = reservedOp languageDef
-mReserved = reserved languageDef
-mParens = parens languageDef
-mCommaSep = commaSep languageDef
-mCommaSep1 = commaSep1 languageDef
-mLexeme = lexeme languageDef
-
-parseTerm :: Stream s m Char => ParsecT s u m Function
-parseTerm = trace "parseTerm" $ buildExpressionParser table termStroke
+parseFormula :: Parser Expression
+parseFormula = parseImpl
     where
-        term = (lexemeLower >>= \str -> (trace "function" $ liftM (Func str) $ mParens $ mCommaSep1 parseTerm) <|> trace "variable" (return (Var str)))
-           <|> (try (mReserved "0") >> trace "zero" (return Zero))
-           <|> trace "term parens" (mParens parseTerm)
-        termStroke = do
-            before <- term
-            howMuch <- liftM (foldl (.) id) $ many $ (try (mReservedOp "'") >> return Stroke)
-            return $ howMuch before
-        table = [ [Infix (mReservedOp "+" >> return Plus) AssocLeft]
-                , [Infix (mReservedOp "*" >> return Mult) AssocLeft]
-                ]
+        parseImpl = liftM (foldr1 (-->)) $ parseOr `sepBy` "->"
+        parseOr = liftM (foldl1 (|||)) $ parseAnd `sepBy` "|"
+        parseAnd = liftM (foldl1 (&&&)) $ parseNot `sepBy` "&"
+        parseNot = (char '!' >> liftM Not parseNot) <|> parseForall
+        parseForall = (char '@' >> liftM2 Forall lowercase parseNot) <|> parseExist
+        parseExist = (char '?' >> liftM2 Exist lowercase parseNot) <|> parsePredicate
+        parsePredicate = (uppercase >>= \name -> (liftM (Predicate name) $ braces $ parseTerm `sepBy` ",") <|> return (Gap name)) <|> parseEqual
+        parseEqual = (liftM2 Equal parseTerm $ char '=' >> parseTerm) <|> braces parseFormula
 
-parseSimpleFormula :: Stream s m Char => ParsecT s u m Expression
-parseSimpleFormula = trace "parseSimpleFormula" $ buildExpressionParser table term
-    where
-        term = (try (mReservedOp "!") >> trace "not" (liftM Not term))
-           <|> trace "variable" (liftM Gap $ try lexemeUpper)
-           <|> trace "formula parens" (mParens parseSimpleFormula)
-        table = [ [Infix (mReservedOp "->" >> trace "implication" (return (-->))) AssocRight]
-                , [Infix (mReservedOp "|" >> trace "or" (return (|||))) AssocLeft]
-                , [Infix (mReservedOp "&" >> trace "and" (return (&&&))) AssocLeft]
-                ]
+skipNewline :: B.ByteString -> [B.ByteString]
+skipNewline = B.lines . fst . B.spanEnd isSpace
 
-parseFormula :: Stream s m Char => ParsecT s u m Expression
-parseFormula = trace "parseFormula" $ buildExpressionParser table term
-    where
-        term = (try (mReservedOp "!") >> liftM Not term)
-           <|> (try (mReservedOp "@") >> liftM2 Forall lexemeLower term)
-           <|> (try (mReservedOp "?") >> liftM2 Exist lexemeLower term)
-           <|> trace "predicate" (liftM2 Predicate lexemeUpper $ mParens $ mCommaSep1 parseTerm)
-           <|> trace "equal" (liftM2 Equal (try parseTerm) $ char '=' >> parseTerm)
-           <|> trace "formula parens" (mParens parseFormula)
-        table = [ [Infix (mReservedOp "->" >> return (-->)) AssocRight]
-                , [Infix (mReservedOp "|" >> return (|||)) AssocLeft]
-                , [Infix (mReservedOp "&" >> return (&&&)) AssocLeft]
-                ]
+parseProof :: Parser [Expression]
+parseProof = StateT $ liftM (, B.empty) . mapM (evalStateT parseFormula) . skipNewline
 
-parseProof :: Stream s m Char => ParsecT s u m [Expression]
-parseProof = many1 $ mLexeme parseFormula
+parseHeading :: Parser ([Expression], Expression)
+parseHeading = liftM2 (,) ((parseFormula `sepBy` ",") <|> return []) $ char '|' >> char '-' >> parseFormula
 
-parseSimpleProof :: Stream s m Char => ParsecT s u m [Expression]
-parseSimpleProof = many1 $ liftM2 const parseSimpleFormula endOfLine
+parseWhole :: Parser (([Expression], Expression), [Expression])
+parseWhole = StateT $ \str ->
+    let head:tail = skipNewline str
+    in (liftM (, B.empty)) $ liftM2 (,) (evalStateT parseHeading head) (mapM (evalStateT parseFormula) tail)
 
-parseHeading :: Stream s m Char => ParsecT s u m ([Expression], Expression)
-parseHeading = liftM2 (,) (mCommaSep parseFormula) $ mReservedOp "|-" >> parseFormula
-
-parseSimpleHeading :: Stream s m Char => ParsecT s u m ([Expression], Expression)
-parseSimpleHeading = liftM2 (,) (mCommaSep parseSimpleFormula) $ mReservedOp "|-" >> parseSimpleFormula
-
-parseFile :: Stream s m Char => ParsecT s u m (([Expression], Expression), [Expression])
-parseFile = liftM2 (,) (mLexeme parseHeading) parseProof
-
-parseSimpleFile :: Stream s m Char => ParsecT s u m (([Expression], Expression), [Expression])
-parseSimpleFile = liftM2 (,) (mLexeme parseSimpleHeading) parseSimpleProof
+parseFromFile :: Parser a -> String -> IO a
+parseFromFile parser name = liftM (fromJust . evalStateT parser) $ B.readFile name

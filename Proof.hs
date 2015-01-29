@@ -63,7 +63,7 @@ splus a b = StateT $ liftM2 eplus (runStateT a) (runStateT b)
 esum = foldl1 eplus
 
 getLog :: Proof [Expression]
-getLog = gets $ \(top:_) -> case top of
+getLog = gets $ \(top:_) -> reverse $ case top of
     Root _ _ _ l -> map getExpression l
     Assumption _ _ l -> l
 
