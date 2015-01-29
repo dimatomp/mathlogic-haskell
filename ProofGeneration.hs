@@ -264,13 +264,13 @@ proveStmt toBeProved@(Implication left right) = case left of
                 intuitionist p right
                 tellEx $ p --> right
                 tellEx $ right
-                ) `mplus` proveStmt right)
+                ) `splus` proveStmt right)
     p -> assume left $ tellEx left >> ((do
              tellEx $ Not p
              intuitionist p right
              tellEx $ p --> right
              tellEx right
-             ) `mplus` proveStmt right)
+             ) `splus` proveStmt right)
 proveStmt toBeProved@(And left right) = do
     tellEx $ left
     tellEx $ right
