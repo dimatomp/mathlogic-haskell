@@ -1,4 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude, TupleSections, FlexibleInstances #-}
+{-# LANGUAGE NoImplicitPrelude, TupleSections, FlexibleInstances, GeneralizedNewtypeDeriving #-}
 
 module Proof where
 
@@ -33,7 +33,17 @@ data ProofBuilder = Root [Axiom] (HashMap Expression ProofStatement) (HashMap Ex
 initBuilder :: [Axiom] -> [ProofBuilder]
 initBuilder axioms = [Root axioms empty empty []]
 
-type Proof = StateT [ProofBuilder] (Either (Int, ErrorReport))
+newtype Proof = Proof { unProof :: StateT [ProofBuilder] (Either (Int, ErrorReport)) }
+                deriving (Monad, MonadState [ProofBuilder])
+
+runProof :: Proof a -> [ProofBuilder] -> Either (Int, ErrorReport) (a, [ProofBuilder])
+runProof = runStateT . unProof
+
+evalProof :: Proof a -> [ProofBuilder] -> Either (Int, ErrorReport) a
+evalProof = evalStateT . unProof
+
+execProof :: Proof a -> [ProofBuilder] -> Either (Int, ErrorReport) a
+execProof = execStateT . unProof
 
 addAssumption :: Expression -> Proof ()
 addAssumption expr = modify (Assumption expr empty [] :)
