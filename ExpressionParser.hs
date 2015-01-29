@@ -1,4 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude, FlexibleContexts #-}
+{-# LANGUAGE NoImplicitPrelude, FlexibleContexts, NoMonomorphismRestriction #-}
 
 module ExpressionParser where
 
@@ -9,73 +9,96 @@ import Data.List
 import Text.Parsec
 import Text.Parsec.Char
 import Text.Parsec.Combinator
-
---import Debug.Trace
+import Text.Parsec.Token
+import Text.Parsec.Expr
 
 import Control.Monad
 
 import Expression
 
-trace _ = id
+import Debug.Trace
+--trace _ = id
 
-lexemeLower :: Stream s m Char => ParsecT s u m String
 lexemeLower = liftM2 (:) lower $ many digit
 
-lexemeUpper :: Stream s m Char => ParsecT s u m String
 lexemeUpper = liftM2 (:) upper $ many digit
 
-braces :: Stream s m Char => ParsecT s u m a -> ParsecT s u m a
-braces = between (char '(') (char ')')
+languageDef = defaultDef { whiteSpace = endOfLine >> return () }
+    where
+        defaultDef = makeTokenParser $ LanguageDef {
+            commentStart = "",
+            commentEnd = "",
+            commentLine = "",
+            nestedComments = True,
+            identStart = parserZero,
+            identLetter = parserZero,
+            opStart = oneOf "-|&!@?+*'",
+            opLetter = oneOf ">-",
+            reservedNames = ["0"],
+            reservedOpNames = ["+", "*", "'", "=", "->", "|", "&", "!", "@", "?", "|-"],
+            caseSensitive = True
+        }
+
+mReservedOp = reservedOp languageDef
+mReserved = reserved languageDef
+mParens = parens languageDef
+mCommaSep = commaSep languageDef
+mCommaSep1 = commaSep1 languageDef
+mLexeme = lexeme languageDef
 
 parseTerm :: Stream s m Char => ParsecT s u m Function
-parseTerm = parsePlus
+parseTerm = trace "parseTerm" $ buildExpressionParser table termStroke
     where
-        parsePlus = trace "parsePlus" $ liftM (foldl1 (+++)) $ parseMult `sepBy1` char '+'
-        parseMult = trace "parseMult" $ liftM (foldl1 (***)) $ parseStroke `sepBy1` char '*'
-        parseStroke = trace "parseStroke" $ do
-            applyTo <- parseFunc
-            howMuch <- liftM length $ many $ char '\''
-            return $ iterate Stroke applyTo !! howMuch
-        parseFunc = trace "parseFunc" $ (lexemeLower >>= \str -> (liftM (Func str) $ braces $ parseTerm `sepBy1` char ',') <|> return (Var str)) <|> parseZero
-        parseZero = trace "parseZero" $ (char '0' >> return Zero) <|> try (braces parseTerm)
-
-trySepBy1 p c = p >>= \fst -> try (c >> trySepBy1 p c >>= return . (fst:)) <|> return [fst]
+        term = (lexemeLower >>= \str -> (trace "function" $ liftM (Func str) $ mParens $ mCommaSep1 parseTerm) <|> trace "variable" (return (Var str)))
+           <|> (try (mReserved "0") >> trace "zero" (return Zero))
+           <|> trace "term parens" (mParens parseTerm)
+        termStroke = do
+            before <- term
+            howMuch <- liftM (foldl (.) id) $ many $ (try (mReservedOp "'") >> return Stroke)
+            return $ howMuch before
+        table = [ [Infix (mReservedOp "+" >> return Plus) AssocLeft]
+                , [Infix (mReservedOp "*" >> return Mult) AssocLeft]
+                ]
 
 parseSimpleFormula :: Stream s m Char => ParsecT s u m Expression
-parseSimpleFormula = parseImpl
+parseSimpleFormula = trace "parseSimpleFormula" $ buildExpressionParser table term
     where
-        parseImpl = trace "parseImpl" $ liftM (foldr1 (-->)) $ parseOr `sepBy1` string "->"
-        parseOr = trace "parseOr" $ liftM (foldl1 (|||)) $ parseAnd `trySepBy1` char '|'
-        parseAnd = trace "parseAnd" $ liftM (foldl1 (&&&)) $ parseNot `sepBy1` char '&'
-        parseNot = trace "parseNot" $ (liftM Not $ char '!' >> parseNot) <|> parseVar
-        parseVar = trace "parseVar" $ liftM Gap lexemeUpper <|> braces parseSimpleFormula
+        term = (try (mReservedOp "!") >> trace "not" (liftM Not term))
+           <|> trace "variable" (liftM Gap $ try lexemeUpper)
+           <|> trace "formula parens" (mParens parseSimpleFormula)
+        table = [ [Infix (mReservedOp "->" >> trace "implication" (return (-->))) AssocRight]
+                , [Infix (mReservedOp "|" >> trace "or" (return (|||))) AssocLeft]
+                , [Infix (mReservedOp "&" >> trace "and" (return (&&&))) AssocLeft]
+                ]
 
 parseFormula :: Stream s m Char => ParsecT s u m Expression
-parseFormula = parseImpl
+parseFormula = trace "parseFormula" $ buildExpressionParser table term
     where
-        parseImpl = trace "parseImpl" $ liftM (foldr1 (-->)) $ parseOr `sepBy1` string "->"
-        parseOr = trace "parseOr" $ liftM (foldl1 (|||)) $ parseAnd `trySepBy1` char '|'
-        parseAnd = trace "parseAnd" $ liftM (foldl1 (&&&)) $ parseNot `sepBy1` char '&'
-        parseNot = trace "parseNot" $ (liftM Not $ char '!' >> parseNot) <|> parseForall
-        parseForall = trace "parseForall" $ (char '@' >> liftM2 Forall lexemeLower parseNot) <|> parseExist
-        parseExist = trace "parseExist" $ (char '?' >> liftM2 Exist lexemeLower parseNot) <|> parsePredicate
-        parsePredicate = trace "parsePredicate" $ (lexemeUpper >>= \lex -> (liftM (Predicate lex) $ braces $ parseTerm `sepBy1` char ',') <|> (return $ Gap lex)) <|> parseEqual
-        parseEqual = trace "parseEqual" $ (liftM2 Equal parseTerm $ char '=' >> parseTerm) <|> braces parseFormula
+        term = (try (mReservedOp "!") >> liftM Not term)
+           <|> (try (mReservedOp "@") >> liftM2 Forall lexemeLower term)
+           <|> (try (mReservedOp "?") >> liftM2 Exist lexemeLower term)
+           <|> trace "predicate" (liftM2 Predicate lexemeUpper $ mParens $ mCommaSep1 parseTerm)
+           <|> trace "equal" (liftM2 Equal (try parseTerm) $ char '=' >> parseTerm)
+           <|> trace "formula parens" (mParens parseFormula)
+        table = [ [Infix (mReservedOp "->" >> return (-->)) AssocRight]
+                , [Infix (mReservedOp "|" >> return (|||)) AssocLeft]
+                , [Infix (mReservedOp "&" >> return (&&&)) AssocLeft]
+                ]
 
 parseProof :: Stream s m Char => ParsecT s u m [Expression]
-parseProof = many1 $ liftM2 const parseFormula endOfLine
+parseProof = many1 $ mLexeme parseFormula
 
 parseSimpleProof :: Stream s m Char => ParsecT s u m [Expression]
 parseSimpleProof = many1 $ liftM2 const parseSimpleFormula endOfLine
 
 parseHeading :: Stream s m Char => ParsecT s u m ([Expression], Expression)
-parseHeading = liftM2 (,) (parseFormula `sepBy` char ',') $ string "|-" >> parseFormula
+parseHeading = liftM2 (,) (mCommaSep parseFormula) $ mReservedOp "|-" >> parseFormula
 
 parseSimpleHeading :: Stream s m Char => ParsecT s u m ([Expression], Expression)
-parseSimpleHeading = liftM2 (,) (parseSimpleFormula `sepBy` char ',') $ string "|-" >> parseSimpleFormula
+parseSimpleHeading = liftM2 (,) (mCommaSep parseSimpleFormula) $ mReservedOp "|-" >> parseSimpleFormula
 
 parseFile :: Stream s m Char => ParsecT s u m (([Expression], Expression), [Expression])
-parseFile = liftM2 (,) (liftM2 const parseHeading endOfLine) parseProof
+parseFile = liftM2 (,) (mLexeme parseHeading) parseProof
 
 parseSimpleFile :: Stream s m Char => ParsecT s u m (([Expression], Expression), [Expression])
-parseSimpleFile = liftM2 (,) (liftM2 const parseSimpleHeading endOfLine) parseSimpleProof
+parseSimpleFile = liftM2 (,) (mLexeme parseSimpleHeading) parseSimpleProof
