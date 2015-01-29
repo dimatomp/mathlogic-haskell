@@ -14,6 +14,9 @@ import Control.Monad.Trans.State
 import Expression
 import Axioms
 
+--import Debug.Trace
+trace _ = id
+
 data ProofStatement = AxiomStatement { getExpression :: Expression, getNum :: Int }
                     | ModusPonens { getExpression :: Expression
                                   , getFrom :: ProofStatement, getImpl :: ProofStatement }
@@ -81,15 +84,18 @@ tellRec [Root axioms proved mp log] expr =
                 return $ Any expr from
             _ -> mzero
     in do
-        result <- {-trace ("1: " ++ show expr) $ -} checkProved `mplus` tryAxioms `mplus` tryMP `mplus` tryPredicates
+        result <- trace ("1: " ++ show expr) $ checkProved `mplus` tryAxioms `mplus` tryMP `mplus` tryPredicates
         let newProved = insert expr result proved
             newMP = case expr of
-                Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (l:list) mp
+                Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (L.insert l list) mp
                 _ -> mp
-        {-trace ("1: Success") $ -}
-        return (result, [Root axioms newProved newMP (result:log)])
+        trace ("1: Success") $ return (result, [Root axioms newProved newMP (result:log)])
 tellRec stack@(Assumption supp mp log : tail) expr =
-    let itsMe = do
+    let retrieve expr =
+            let grown = foldl (flip (-->)) expr $ map (\(Assumption s _ _) -> s) $ init stack
+                Root _ table _ _ = last tail
+            in trace ("Checking for " ++ show grown) $ liftM (, tail) $ wrapMaybe $ lookup grown table
+        itsMe = do
             guard $ expr == supp
             (_, tail) <- tellRec tail $ expr --> expr --> expr
             (_, tail) <- tellRec tail $ expr --> (expr --> expr) --> expr
@@ -102,9 +108,9 @@ tellRec stack@(Assumption supp mp log : tail) expr =
             tellRec tail $ supp --> expr
         tryMP = do
             list <- wrapMaybe $ lookup expr mp
-            (left, tail) <- msum $ map (\left -> liftM ((left,) . snd) $ tellRec tail $ supp --> left) list
+            left <- msum $ map (liftM2 (>>) retrieve return) list
             --(_, tail) <- tellRec tail $ supp --> left
-            (_, tail) <- tellRec tail $ supp --> left --> expr
+            --(_, tail) <- tellRec tail $ supp --> left --> expr
             (_, tail) <- tellRec tail $ (supp --> left) --> (supp --> left --> expr) --> supp --> expr
             (_, tail) <- tellRec tail $ (supp --> left --> expr) --> supp --> expr
             tellRec tail $ supp --> expr
@@ -116,14 +122,14 @@ tellRec stack@(Assumption supp mp log : tail) expr =
             tellEx $ c
         tryPredicates = case expr of
             Implication (Exist x a) b -> do
-                (_, tail) <- tellRec tail $ supp --> a --> b
+                retrieve $ a --> b
                 when (hasOccurrences x b) $ Left $ Just $ FreeOccurrence x b
                 when (hasOccurrences x supp) $ Left $ Just $ BadRuleUsage x supp
                 (_, tail) <- runStateT (swapArgs supp a b) tail
                 (_, tail) <- tellRec tail $ Exist x a --> supp --> b
                 runStateT (swapArgs (Exist x a) supp b) tail
             Implication a (Forall x b) -> do
-                (_, tail) <- tellRec tail $ supp --> a --> b
+                retrieve $ a --> b
                 when (hasOccurrences x a) $ Left $ Just $ FreeOccurrence x a
                 when (hasOccurrences x supp) $ Left $ Just $ BadRuleUsage x supp
                 (_, tail) <- flip runStateT tail $ assume (supp &&& a) $ do
@@ -146,10 +152,9 @@ tellRec stack@(Assumption supp mp log : tail) expr =
                     tellEx $ Forall x b
             _ -> mzero
     in do
-        (result, tail) <- {-trace (show (length stack) ++ ": " ++ show expr) $ -}
-            itsMe `mplus` whoKnows `mplus` tryMP `mplus` tryPredicates
+        (result, tail) <- trace (show (length stack) ++ ": " ++ show expr) $
+            retrieve expr `mplus` itsMe `mplus` whoKnows `mplus` tryMP `mplus` tryPredicates
         let newMP = case expr of
                 Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (L.insert l list) mp
                 _ -> mp
-        {-trace (show (length stack) ++ ": Success") $ -}
-        return (result, Assumption supp newMP (expr:log) : tail)
+        trace (show (length stack) ++ ": Success") $ return (result, Assumption supp newMP (expr:log) : tail)
