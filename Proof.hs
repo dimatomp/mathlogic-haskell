@@ -5,12 +5,15 @@ module Proof where
 import Prelude hiding (lookup)
 
 import Data.Either.Combinators
-import Data.HashMap.Strict hiding (foldl, foldr, map)
+import Data.HashMap.Strict hiding (empty, foldl, foldr, map)
 import Data.Maybe
 import qualified Data.List as L
+import qualified Data.HashMap.Strict as H (empty)
 
+import Control.Applicative (Applicative(..), Alternative(..))
 import Control.Monad
-import Control.Monad.Trans.State
+import Control.Monad.State.Class
+import Control.Monad.State
 
 import Expression
 import Axioms
@@ -31,10 +34,21 @@ data ProofBuilder = Root [Axiom] (HashMap Expression ProofStatement) (HashMap Ex
                   | Assumption Expression (HashMap Expression [Expression]) [Expression]
 
 initBuilder :: [Axiom] -> [ProofBuilder]
-initBuilder axioms = [Root axioms empty empty []]
+initBuilder axioms = [Root axioms H.empty H.empty []]
 
-newtype Proof = Proof { unProof :: StateT [ProofBuilder] (Either (Int, ErrorReport)) }
-                deriving (Monad, MonadState [ProofBuilder])
+newtype Proof a = Proof { unProof :: StateT [ProofBuilder] (Either (Int, ErrorReport)) a }
+                  deriving (Monad, MonadState [ProofBuilder])
+
+instance Functor Proof where
+    fmap = liftM
+
+instance Applicative Proof where
+    pure = return
+    (<*>) = liftM2 ($)
+
+instance Alternative Proof where
+    empty = liftM length getLog >>= \len -> Proof (StateT $ \_ -> Left (len, Nothing))
+    a <|> b = Proof $ StateT $ liftM2 eplus (runProof a) (runProof b)
 
 runProof :: Proof a -> [ProofBuilder] -> Either (Int, ErrorReport) (a, [ProofBuilder])
 runProof = runStateT . unProof
@@ -42,11 +56,11 @@ runProof = runStateT . unProof
 evalProof :: Proof a -> [ProofBuilder] -> Either (Int, ErrorReport) a
 evalProof = evalStateT . unProof
 
-execProof :: Proof a -> [ProofBuilder] -> Either (Int, ErrorReport) a
+execProof :: Proof a -> [ProofBuilder] -> Either (Int, ErrorReport) [ProofBuilder]
 execProof = execStateT . unProof
 
 addAssumption :: Expression -> Proof ()
-addAssumption expr = modify (Assumption expr empty [] :)
+addAssumption expr = modify (Assumption expr H.empty [] :)
 
 remAssumption :: Proof ()
 remAssumption = modify tail
@@ -59,16 +73,14 @@ assume expr proof = do
     return res
 
 tellEx :: Expression -> Proof ProofStatement
-tellEx expr = StateT (`tellRec` expr)
+tellEx expr = Proof $ StateT (`tellRec` expr)
 
 tryTell :: Expression -> Proof (Either Expression ProofStatement)
-tryTell expr = liftM Right (tellEx expr) `splus` return (Left expr)
+tryTell expr = liftM Right (tellEx expr) <|> return (Left expr)
 
 eplus res@(Right _) _ = res
 eplus (Left (_, Nothing)) res = res
 eplus res@(Left _) _ = res
-
-splus a b = StateT $ liftM2 eplus (runStateT a) (runStateT b)
 
 esum = foldl1 eplus
 
@@ -146,14 +158,14 @@ tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (leng
                 retrieve $ a --> b
                 when (hasOccurrences x b) $ wrap $ FreeOccurrence x b
                 when (hasOccurrences x supp) $ wrap $ BadRuleUsage x supp
-                (_, tail) <- runStateT (swapArgs supp a b) tail
+                (_, tail) <- runProof (swapArgs supp a b) tail
                 (_, tail) <- tellRec tail $ Exist x a --> supp --> b
-                runStateT (swapArgs (Exist x a) supp b) tail
+                runProof (swapArgs (Exist x a) supp b) tail
             Implication a (Forall x b) -> do
                 retrieve $ a --> b
                 when (hasOccurrences x a) $ wrap $ FreeOccurrence x a
                 when (hasOccurrences x supp) $ wrap $ BadRuleUsage x supp
-                (_, tail) <- flip runStateT tail $ assume (supp &&& a) $ do
+                (_, tail) <- flip runProof tail $ assume (supp &&& a) $ do
                     tellEx $ supp &&& a
                     tellEx $ supp &&& a --> supp
                     tellEx $ supp
@@ -163,7 +175,7 @@ tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (leng
                     tellEx $ a --> b
                     tellEx $ b
                 (_, tail) <- tellRec tail $ supp &&& a --> Forall x b
-                flip runStateT tail $ assume supp $ assume a $ do
+                flip runProof tail $ assume supp $ assume a $ do
                     tellEx $ supp
                     tellEx $ a
                     tellEx $ supp --> a --> supp &&& a

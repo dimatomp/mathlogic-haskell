@@ -7,6 +7,7 @@ import Data.List
 import Data.Maybe
 import Data.ByteString.Char8 (ByteString)
 
+import Control.Applicative ((<|>))
 import Control.Monad
 
 proveAG a b c = do
@@ -265,13 +266,13 @@ proveStmt toBeProved@(Implication left right) = case left of
                 intuitionist p right
                 tellEx $ p --> right
                 tellEx $ right
-                ) `splus` proveStmt right)
+                ) <|> proveStmt right)
     p -> assume left $ tellEx left >> ((do
              tellEx $ Not p
              intuitionist p right
              tellEx $ p --> right
              tellEx right
-             ) `splus` proveStmt right)
+             ) <|> proveStmt right)
 proveStmt toBeProved@(And left right) = do
     tellEx $ left
     tellEx $ right
