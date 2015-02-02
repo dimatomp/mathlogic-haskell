@@ -1,7 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-
-import Prelude
-
 import Data.List
 import Data.Char
 import Data.Maybe

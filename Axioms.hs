@@ -62,10 +62,10 @@ arithAxioms = map justMatch [
     Var "a" === Var "b" --> Stroke (Var "a") === Stroke (Var "b"),
     Var "a" === Var "b" --> Var "a" === Var "c" --> Var "b" === Var "c",
     Stroke (Var "a") === Stroke (Var "b") --> Var "a" === Var "b",
-    Not (Stroke (Var "a") === Zero),
+    Not (Stroke (Var "a") === zero),
     Var "a" +++ Stroke (Var "b") === Stroke (Var "a" +++ Var "b"),
-    Var "a" +++ Zero === Var "a",
-    Var "a" *** Zero === Zero,
+    Var "a" +++ zero === Var "a",
+    Var "a" *** zero === zero,
     Var "a" *** Stroke (Var "b") === Var "a" *** Var "b" +++ Var "a"
     ] ++ [lastScheme]
     where
@@ -74,7 +74,7 @@ arithAxioms = map justMatch [
             ((expr, func), err) <- eitherMatch b a
             guardU $ isNothing err
             guardU $ all (\(k, v) -> v == Gap k) expr
-            guardU $ (x, Zero) `elem` func
+            guardU $ (x, zero) `elem` func
             guardU $ all (\(k, v) -> k == x || v == Var k) func
             ((expr, func), err) <- eitherMatch b c
             guardU $ isNothing err

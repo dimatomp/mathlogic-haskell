@@ -53,7 +53,7 @@ parseTerm = parsePlus
             strokes <- liftM (foldl (.) id) $ many $ char '\'' >> return Stroke
             return $ strokes arg
         parseFunc = (lowercase >>= \name -> (liftM (Func name) $ braces $ parseTerm `sepBy` ",") <|> return (Var name)) <|> parseZero
-        parseZero = (char '0' >> return Zero) <|> braces parseTerm
+        parseZero = (char '0' >> return zero) <|> braces parseTerm
 
 parseFormula :: Parser Expression
 parseFormula = parseImpl

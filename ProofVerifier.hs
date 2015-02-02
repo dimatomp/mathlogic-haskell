@@ -1,7 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-
-import Prelude hiding (readFile, null)
-
 import Data.List hiding (null)
 
 import System.Environment

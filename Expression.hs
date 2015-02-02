@@ -1,4 +1,3 @@
-{-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Expression where
@@ -34,19 +33,20 @@ data Function = Stroke Function
               | Plus Function Function
               | Func VarString [Function]
               | Var VarString
-              | Zero
               deriving (Eq, Ord)
+
+zero = Func (vPack "0") []
 
 instance Show Function where
     showsPrec _ (Stroke p) = showsPrec 7 p . showChar '\''
     showsPrec _ (Var s) = showVar s
     showsPrec n (Mult l r) = showParen (n > 6) $ showsPrec 6 l . showChar '*' . showsPrec 7 r
     showsPrec n (Plus l r) = showParen (n > 5) $ showsPrec 5 l . showChar '+' . showsPrec 6 r
+    showsPrec _ (Func s []) = showVar s
     showsPrec _ (Func s list) = showVar s . showChar '(' . showList list . showChar ')'
         where
             showList [expr] = shows expr
             showList (f:s) = shows f . showChar ',' . showList s
-    showsPrec _ Zero = showChar '0'
 
 data Expression = Gap VarString
                 | Not Expression
@@ -79,7 +79,6 @@ instance Hashable Function where
     hashWithSalt p (Plus l r) = hashWithSalt p l * p * p + hashWithSalt p r * p + 3
     hashWithSalt p (Func e l) = foldr ((+) . (* p) . hashWithSalt p) (hashWithSalt p e) l * p + 4
     hashWithSalt p (Var s) = hashWithSalt p s * p + 5
-    hashWithSalt p Zero = 6
 
 instance Hashable Expression where
     hashWithSalt p (Gap s) = hashWithSalt p s * p + 7
@@ -127,10 +126,8 @@ matchWith e1 e2 = runStateT (matchesMaybe [] e1 e2) Nothing
         isSafe list (Plus l r) = isSafe list l && isSafe list r
         isSafe list (Mult l r) = isSafe list l && isSafe list r
         isSafe list (Func s args) = all (isSafe list) args
-        isSafe _ Zero = True
 
         matchesFunc :: [B.ByteString] -> Function -> Function -> StateT (Maybe ErrorMessage) Maybe [(B.ByteString, Function)]
-        matchesFunc _ Zero Zero = return []
         matchesFunc t (Var n) res@(Var m)
             | n == m = return $ if n `elem` t then [] else [(n, res)]
             | otherwise = do
@@ -173,7 +170,6 @@ hasOccurFunc s (Stroke l) = hasOccurFunc s l
 hasOccurFunc s (Plus l r) = hasOccurFunc s l || hasOccurFunc s r
 hasOccurFunc s (Mult l r) = hasOccurFunc s l || hasOccurFunc s r
 hasOccurFunc s (Func _ p) = any (hasOccurFunc s) p
-hasOccurFunc _ Zero = False
 
 hasOccurrences :: VarString -> Expression -> Bool
 hasOccurrences s (And l r) = hasOccurrences s l || hasOccurrences s r
@@ -194,7 +190,6 @@ substituteFunc x y (Func n list) = Func n $ map (substituteFunc x y) list
 substituteFunc x y res@(Var x1)
     | x == x1 = Var y
     | otherwise = res
-substituteFunc _ _ Zero = Zero
 
 substitute :: VarString -> VarString -> Expression -> Expression
 substitute _ _ res@(Gap _) = res
@@ -217,7 +212,6 @@ grabFunc (Mult l r) = grabFunc l `union` grabFunc r
 grabFunc (Plus l r) = grabFunc l `union` grabFunc r
 grabFunc (Func name list) = foldl union [] $ map grabFunc list
 grabFunc (Var n) = [n]
-grabFunc Zero = []
 
 grabVars :: Expression -> [VarString]
 grabVars = grabImpl []
