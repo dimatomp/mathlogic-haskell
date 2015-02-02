@@ -9,7 +9,7 @@ import Axioms
 import Proof
 
 import Data.Maybe
-import Data.Map hiding (foldl)
+import Data.HashMap.Strict hiding (foldl)
 
 import Control.Monad
 

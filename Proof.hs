@@ -4,7 +4,6 @@ module Proof where
 
 import Prelude hiding (lookup)
 
-import Data.Either.Combinators
 import Data.HashMap.Strict hiding (empty, foldl, foldr, map)
 import Data.Maybe
 import qualified Data.List as L
@@ -37,14 +36,13 @@ initBuilder :: [Axiom] -> [ProofBuilder]
 initBuilder axioms = [Root axioms H.empty H.empty []]
 
 newtype Proof a = Proof { unProof :: StateT [ProofBuilder] (Either (Int, ErrorReport)) a }
-                  deriving (Monad, MonadState [ProofBuilder])
+                  deriving (Functor, Applicative, Monad, MonadState [ProofBuilder])
 
-instance Functor Proof where
-    fmap = liftM
+eplus res@(Right _) _ = res
+eplus (Left (_, Nothing)) res = res
+eplus res@(Left _) _ = res
 
-instance Applicative Proof where
-    pure = return
-    (<*>) = liftM2 ($)
+esum = foldl1 eplus
 
 instance Alternative Proof where
     empty = liftM length getLog >>= \len -> Proof (StateT $ \_ -> Left (len, Nothing))
@@ -78,22 +76,21 @@ tellEx expr = Proof $ StateT (`tellRec` expr)
 tryTell :: Expression -> Proof (Either Expression ProofStatement)
 tryTell expr = liftM Right (tellEx expr) <|> return (Left expr)
 
-eplus res@(Right _) _ = res
-eplus (Left (_, Nothing)) res = res
-eplus res@(Left _) _ = res
-
-esum = foldl1 eplus
-
 getLog :: Proof [Expression]
 getLog = gets $ \(top:_) -> reverse $ case top of
     Root _ _ _ l -> map getExpression l
     Assumption _ _ l -> l
+
+getRootLog :: Proof [ProofStatement]
+getRootLog = gets $ \l -> let Root _ _ _ list = last l in reverse list
 
 tellRec :: [ProofBuilder] -> Expression -> Either (Int, ErrorReport) (ProofStatement, [ProofBuilder])
 tellRec [Root axioms proved mp log] expr =
     let wrapMaybe (Just res) = Right res
         wrapMaybe Nothing = Left (length log, Nothing)
         wrap a = Left (length log, Just a)
+        mapBoth _ f (Right r) = Right (f r)
+        mapBoth f _ (Left l) = Left (f l)
         checkProved = wrapMaybe $ lookup expr proved
         tryAxioms = do
             number <- esum $ zipWith (\num f -> mapBoth (length log,) (const num) (f expr)) [1..] axioms
@@ -128,6 +125,11 @@ tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (leng
             let grown = foldl (flip (-->)) expr $ map (\(Assumption s _ _) -> s) $ init stack
                 Root _ table _ _ = last tail
             in trace ("Checking for " ++ show grown) $ liftM (, tail) $ wrapMaybe $ lookup grown table
+        --checkProved =
+        --    let scanned = scanl (flip (-->)) (supp --> expr) $ map (\(Assumption s _ _) -> s) $ init tail
+        --        applied = zipWith (\e (Assumption s m l) -> Assumption s m (e:l)) scanned $ init tail
+        --        Root s t m l = last tail
+        --    in liftM (\res -> (res, applied ++ [Root s t m (res:l)])) $ wrapMaybe $ lookup (last scanned) t
         itsMe = do
             when (expr /= supp) $ wrapMaybe Nothing
             (_, tail) <- tellRec tail $ expr --> expr --> expr
@@ -142,8 +144,6 @@ tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (leng
         tryMP = do
             list <- wrapMaybe $ lookup expr mp
             left <- esum $ map (liftM2 (>>) retrieve return) list
-            --(_, tail) <- tellRec tail $ supp --> left
-            --(_, tail) <- tellRec tail $ supp --> left --> expr
             (_, tail) <- tellRec tail $ (supp --> left) --> (supp --> left --> expr) --> supp --> expr
             (_, tail) <- tellRec tail $ (supp --> left --> expr) --> supp --> expr
             tellRec tail $ supp --> expr
@@ -186,8 +186,11 @@ tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (leng
             _ -> wrapMaybe Nothing
     in do
         (result, tail) <- trace (show (length stack) ++ ": " ++ show expr) $
-            retrieve expr `eplus` itsMe `eplus` whoKnows `eplus` tryMP `eplus` tryPredicates
+            {-checkProved `eplus` -}itsMe `eplus` whoKnows `eplus` tryMP `eplus` tryPredicates
         let newMP = case expr of
                 Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (L.insert l list) mp
                 _ -> mp
         trace (show (length stack) ++ ": Success") $ return (result, Assumption supp newMP (expr:log) : tail)
+    where
+        mapLeft f (Left a) = Left (f a)
+        mapLeft _ res = res

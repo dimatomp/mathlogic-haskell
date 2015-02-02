@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Expression where
 
@@ -11,6 +12,17 @@ import qualified Data.ByteString.Char8 as B
 import Control.Monad
 import Control.Monad.Trans.State
 
+type VarString = B.ByteString
+
+vUnpack = B.unpack
+vPack = B.pack
+vCons = B.cons
+vUncons = fromJust . B.uncons
+vReadInt s = fromMaybe 0 $ liftM fst $ B.readInt s
+vNull = B.null
+
+showVar = showString . vUnpack
+
 bind2 :: Monad m => (a -> b -> m c) -> m a -> m b -> m c
 bind2 f ma mb = do
     a <- ma
@@ -20,45 +32,43 @@ bind2 f ma mb = do
 data Function = Stroke Function
               | Mult Function Function
               | Plus Function Function
-              | Func B.ByteString [Function]
-              | Var B.ByteString
+              | Func VarString [Function]
+              | Var VarString
               | Zero
               deriving (Eq, Ord)
 
-showB = showString . B.unpack
-
 instance Show Function where
     showsPrec _ (Stroke p) = showsPrec 7 p . showChar '\''
-    showsPrec _ (Var s) = showB s
+    showsPrec _ (Var s) = showVar s
     showsPrec n (Mult l r) = showParen (n > 6) $ showsPrec 6 l . showChar '*' . showsPrec 7 r
     showsPrec n (Plus l r) = showParen (n > 5) $ showsPrec 5 l . showChar '+' . showsPrec 6 r
-    showsPrec _ (Func s list) = showB s . showChar '(' . showList list . showChar ')'
+    showsPrec _ (Func s list) = showVar s . showChar '(' . showList list . showChar ')'
         where
             showList [expr] = shows expr
             showList (f:s) = shows f . showChar ',' . showList s
     showsPrec _ Zero = showChar '0'
 
-data Expression = Gap B.ByteString
+data Expression = Gap VarString
                 | Not Expression
                 | And Expression Expression
                 | Or Expression Expression
                 | Implication Expression Expression
-                | Forall B.ByteString Expression
-                | Exist B.ByteString Expression
+                | Forall VarString Expression
+                | Exist VarString Expression
                 | Equal Function Function
-                | Predicate B.ByteString [Function]
+                | Predicate VarString [Function]
                 deriving (Eq, Ord)
 
 instance Show Expression where
-    showsPrec _ (Gap n) = showB n
+    showsPrec _ (Gap n) = showVar n
     showsPrec _ (Not p) = showChar '!' . showsPrec 5 p
     showsPrec n (And l r) = showParen (n > 3) $ showsPrec 3 l . showChar '&' . showsPrec 4 r
     showsPrec n (Or l r) = showParen (n > 2) $ showsPrec 2 l . showChar '|' . showsPrec 3 r
     showsPrec n (Implication l r) = showParen (n > 1) $ showsPrec 2 l . showString "->" . showsPrec 1 r
-    showsPrec _ (Forall s e) = showChar '@' . showB s . showsPrec 7 e
-    showsPrec _ (Exist s e) = showChar '?' . showB s . showsPrec 7 e
+    showsPrec _ (Forall s e) = showChar '@' . showVar s . showsPrec 7 e
+    showsPrec _ (Exist s e) = showChar '?' . showVar s . showsPrec 7 e
     showsPrec _ (Equal f1 f2) = shows f1 . showChar '=' . shows f2
-    showsPrec _ (Predicate s list) = showB s . showChar '(' . showParam list . showChar ')'
+    showsPrec _ (Predicate s list) = showVar s . showChar '(' . showParam list . showChar ')'
         where
             showParam [expr] = shows expr
             showParam (f:s) = shows f . showChar ',' . showParam s
@@ -95,9 +105,9 @@ infixr 1 -->
 (|||) = Or
 (-->) = Implication
 
-data ErrorMessage = UnsafeForSubst Function Expression B.ByteString
-                  | FreeOccurrence B.ByteString Expression
-                  | BadRuleUsage B.ByteString Expression
+data ErrorMessage = UnsafeForSubst Function Expression VarString
+                  | FreeOccurrence VarString Expression
+                  | BadRuleUsage VarString Expression
                   deriving Show
 
 matches = (isJust .) . matchWith
@@ -165,7 +175,7 @@ hasOccurFunc s (Mult l r) = hasOccurFunc s l || hasOccurFunc s r
 hasOccurFunc s (Func _ p) = any (hasOccurFunc s) p
 hasOccurFunc _ Zero = False
 
-hasOccurrences :: B.ByteString -> Expression -> Bool
+hasOccurrences :: VarString -> Expression -> Bool
 hasOccurrences s (And l r) = hasOccurrences s l || hasOccurrences s r
 hasOccurrences s (Or l r) = hasOccurrences s l || hasOccurrences s r
 hasOccurrences s (Implication l r) = hasOccurrences s l || hasOccurrences s r
@@ -175,3 +185,61 @@ hasOccurrences s (Exist n e) = s /= n && hasOccurrences s e
 hasOccurrences s (Equal l r) = hasOccurFunc s l || hasOccurFunc s r
 hasOccurrences s (Predicate _ list) = any (hasOccurFunc s) list
 hasOccurrences _ _ = False
+
+substituteFunc :: VarString -> VarString -> Function -> Function
+substituteFunc x y (Stroke p) = Stroke $ substituteFunc x y p
+substituteFunc x y (Mult l r) = substituteFunc x y l *** substituteFunc x y r
+substituteFunc x y (Plus l r) = substituteFunc x y l +++ substituteFunc x y r
+substituteFunc x y (Func n list) = Func n $ map (substituteFunc x y) list
+substituteFunc x y res@(Var x1)
+    | x == x1 = Var y
+    | otherwise = res
+substituteFunc _ _ Zero = Zero
+
+substitute :: VarString -> VarString -> Expression -> Expression
+substitute _ _ res@(Gap _) = res
+substitute x y (Not p) = Not $ substitute x y p
+substitute x y (And l r) = substitute x y l &&& substitute x y r
+substitute x y (Or l r) = substitute x y l ||| substitute x y r
+substitute x y (Implication l r) = substitute x y l --> substitute x y r
+substitute x y res@(Forall x1 p)
+    | x == x1 = res
+    | otherwise = Forall x1 $ substitute x y p
+substitute x y res@(Exist x1 p)
+    | x == x1 = res
+    | otherwise = Exist x1 $ substitute x y p
+substitute x y (Equal l r) = substituteFunc x y l === substituteFunc x y r
+substitute x y (Predicate n list) = Predicate n $ map (substituteFunc x y) list
+
+grabFunc :: Function -> [VarString]
+grabFunc (Stroke p) = grabFunc p
+grabFunc (Mult l r) = grabFunc l `union` grabFunc r
+grabFunc (Plus l r) = grabFunc l `union` grabFunc r
+grabFunc (Func name list) = foldl union [] $ map grabFunc list
+grabFunc (Var n) = [n]
+grabFunc Zero = []
+
+grabVars :: Expression -> [VarString]
+grabVars = grabImpl []
+    where
+        grabImpl l (Gap n) = if n `elem` l then [] else [n]
+        grabImpl l (Not p) = grabImpl l p
+        grabImpl l (And a b) = grabImpl l a `union` grabImpl l b
+        grabImpl l (Or a b) = grabImpl l a `union` grabImpl l b
+        grabImpl l (Implication a b) = grabImpl l a `union` grabImpl l b
+        grabImpl l (Forall x e) = grabImpl (x:l) e
+        grabImpl l (Exist x e) = grabImpl (x:l) e
+        grabImpl l (Equal a b) = (grabFunc a `union` grabFunc b) \\ l
+        grabImpl l (Predicate name list) = (foldl union [] $ map (grabFunc) list) \\ l
+
+chooseUnique :: VarString -> [VarString] -> VarString
+chooseUnique var list =
+    let (hChar, hTail) = vUncons var
+        hNum = vReadInt hTail
+        mapped = list >>= \s -> do
+            let (vChar, vTail) = vUncons s
+                vNum = vReadInt vTail
+            guard $ vChar == hChar && vNum >= hNum
+            return vNum
+        rNum = head $ filter (not . (`elem` mapped)) [hNum..]
+    in if rNum == hNum then var else hChar `vCons` vPack (show rNum)

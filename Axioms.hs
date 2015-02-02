@@ -1,12 +1,13 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, FlexibleInstances #-}
 
 module Axioms where
 
 import Expression
 import Data.Maybe
-import Control.Monad (when)
+import Control.Monad
 
 type ErrorReport = Maybe ErrorMessage
+
 type Axiom = Expression -> Either ErrorReport ()
 
 justMatch patt expr = if patt `matches` expr then Right () else Left Nothing

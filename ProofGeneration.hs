@@ -5,7 +5,7 @@ import Proof
 
 import Data.List
 import Data.Maybe
-import Data.ByteString.Char8 (ByteString)
+import Data.ByteString.Char8
 
 import Control.Applicative ((<|>))
 import Control.Monad
