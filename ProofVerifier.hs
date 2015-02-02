@@ -14,7 +14,7 @@ import Axioms
 import ProofUtils
 
 main = do
-    [fin, fout] <- getArgs
+    (fin:_) <- getArgs
     inputData <- parseFromFile parseProof fin
     let Right proof = flip evalProof (initBuilder $ basicAxioms ++ [classicAxiom]) $ forM inputData tryTell
-    writeFile fout $ concatMap (++ "\n") $ map show $ getLoggedProof proof
+    forM_ (getLoggedProof proof) print

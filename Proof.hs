@@ -29,7 +29,7 @@ instance Show ProofStatement where
     show = show . getExpression
 
 data ProofBuilder = Root [Axiom] (HashMap Expression ProofStatement) (HashMap Expression [Expression]) [ProofStatement]
-                  | Assumption Expression (HashMap Expression [Expression]) [Expression]
+                  | Assumption Expression (HashMap Expression [Expression])
 
 initBuilder :: [Axiom] -> [ProofBuilder]
 initBuilder axioms = [Root axioms H.empty H.empty []]
@@ -57,7 +57,7 @@ execProof :: Proof a -> [ProofBuilder] -> Either (Int, ErrorReport) [ProofBuilde
 execProof = execStateT . unProof
 
 addAssumption :: Expression -> Proof ()
-addAssumption expr = modify (Assumption expr H.empty [] :)
+addAssumption expr = modify (Assumption expr H.empty :)
 
 remAssumption :: Proof ()
 remAssumption = modify tail
@@ -76,12 +76,7 @@ tryTell :: Expression -> Proof (Either Expression ProofStatement)
 tryTell expr = liftM Right (tellEx expr) <|> return (Left expr)
 
 getLog :: Proof [Expression]
-getLog = gets $ \(top:_) -> reverse $ case top of
-    Root _ _ _ l -> map getExpression l
-    Assumption _ _ l -> l
-
-getRootLog :: Proof [ProofStatement]
-getRootLog = gets $ \l -> let Root _ _ _ list = last l in reverse list
+getLog = gets $ (\(Root _ _ _ l) -> reverse $ map getExpression l) . last
 
 asRoot :: Proof ProofStatement -> Proof ProofStatement
 asRoot proof = do
@@ -128,12 +123,13 @@ tellRec [Root axioms proved mp log] expr =
                 _ -> mp
         {-trace ("1: Success") $-}
         return (result, [Root axioms newProved newMP (result:log)])
-tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (length log, err)) $
-    let wrapMaybe (Just res) = Right res
-        wrapMaybe Nothing = Left (length log, Nothing)
-        wrap a = Left (length log, Just a)
+tellRec stack@(Assumption supp mp : tail) expr =
+    let rootLength = let Root _ _ _ l = last tail in length l
+        wrapMaybe (Just res) = Right res
+        wrapMaybe Nothing = Left (rootLength, Nothing)
+        wrap a = Left (rootLength, Just a)
         retrieve expr =
-            let grown = foldl (flip (-->)) expr $ map (\(Assumption s _ _) -> s) $ init stack
+            let grown = foldl (flip (-->)) expr $ map (\(Assumption s _) -> s) $ init stack
                 Root _ table _ _ = last tail
             in {-trace ("Checking for " ++ show grown) $ -}liftM (, tail) $ wrapMaybe $ lookup grown table
         itsMe = do
@@ -199,7 +195,4 @@ tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (leng
                 Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (L.insert l list) mp
                 _ -> mp
         {-trace (show (length stack) ++ ": Success") $-}
-        return (result, Assumption supp newMP (expr:log) : tail)
-    where
-        mapLeft f (Left a) = Left (f a)
-        mapLeft _ res = res
+        return (result, Assumption supp newMP : tail)

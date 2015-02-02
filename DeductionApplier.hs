@@ -14,8 +14,8 @@ import ProofUtils
 import Axioms
 
 main = do
-    [fin, fout] <- getArgs
+    (fin:_) <- getArgs
     ((supp, _), inputData) <- parseFromFile parseWhole fin
     let assumeAll = foldr (\s f -> assume s . f) id supp
         Right [Root _ _ _ log] = flip execProof (initBuilder $ basicAxioms ++ [classicAxiom]) $ assumeAll $ forM_ inputData tellEx
-    writeFile fout $ concatMap (++ "\n") $ map show $ getLoggedProof $ map Right $ reverse log
+    forM_ (getLoggedProof $ map Right $ reverse log) print
