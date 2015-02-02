@@ -238,7 +238,7 @@ notAThenBIsOr a b = asRoot $ do
 contradiction p right = do
     tellEx $ p
     tellEx $ Not p
-    tellEx $ Not p --> p --> right
+    intuitionist p right
     tellEx $ p --> right
     tellEx $ right
 
@@ -282,15 +282,11 @@ proveStmt toBeProved@(Implication left right) = case left of
         proveStmt $ p --> right
         proveBA (Not (Not p)) (p --> right)
         proveAG (Not (Not p)) p right
-    Not p -> do
-        intuitionist p right
-        assume left $ contradiction p right <|> proveStmt right
-    p -> do
-        intuitionist p right
-        assume left $ contradiction p right <|> proveStmt right
+    Not p -> assume left $ contradiction p right <|> proveStmt right
+    p -> assume left $ contradiction p right <|> proveStmt right
 proveStmt toBeProved@(And left right) = do
-    tellEx $ left
-    tellEx $ right
+    proveStmt $ left
+    proveStmt $ right
     tellEx $ left --> right --> left &&& right
     tellEx $ right --> left &&& right
     tellEx $ toBeProved

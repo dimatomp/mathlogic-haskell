@@ -7,6 +7,8 @@ import ProofGeneration
 import Control.Applicative (Alternative(..))
 import Control.Monad
 
+--import Debug.Trace
+
 mapQ :: Expression -> Expression -> Proof Expression
 mapQ (Forall x p) q = assume (Forall x (p --> q)) $ do
     assume (Forall x p) $ do
@@ -71,6 +73,29 @@ extractQ (Not (Forall x p)) = assume (Not (Forall x p)) $ do
     tellEx $ Not (Not (Exist x (Not p))) --> Exist x (Not p)
     tellEx $ Exist x (Not p)
     return $ Exist x (Not p)
+extractQ (Not (Not (Forall x e))) = assume (Not (Not (Forall x e))) $ do
+    tellEx $ Not (Not (Forall x e)) --> Forall x e
+    tellEx $ Forall x e
+    addNotNot e
+    proveBA (Forall x e) (e --> Not (Not e))
+    tellEx $ Forall x e --> Forall x (e --> Not (Not e))
+    tellEx $ Forall x (e --> Not (Not e))
+    mapQ (Forall x e) (Not (Not e))
+    tellEx $ Forall x e --> Forall x (Not (Not e))
+    tellEx $ Forall x (Not (Not e))
+    return $ Forall x (Not (Not e))
+extractQ (Not (Not (Exist x e))) = assume (Not (Not (Exist x e))) $ do
+    tellEx $ Not (Not (Exist x e)) --> Exist x e
+    tellEx $ Not (Not (Exist x e))
+    tellEx $ Exist x e
+    addNotNot e
+    proveBA (Exist x e) (e --> Not (Not e))
+    tellEx $ Exist x e --> Forall x (e --> Not (Not e))
+    tellEx $ Forall x (e --> Not (Not e))
+    mapQ (Exist x e) (Not (Not e))
+    tellEx $ Exist x e --> Exist x (Not (Not e))
+    tellEx $ Exist x (Not (Not e))
+    return $ Exist x (Not (Not e))
 extractQ (Not (Not e)) = extractQ e >>= \result -> assume (Not (Not e)) $ do
     tellEx $ Not (Not e) --> e
     tellEx $ Not (Not e)
@@ -277,7 +302,7 @@ extractQ (Or (Exist x p) q) = do
         proveBA px1 (px1 ||| q --> Exist x1 (px1 ||| q))
         proveAG px1 (px1 ||| q) (Exist x1 (px1 ||| q))
         tellEx $ Exist x1 px1 --> Exist x1 (px1 ||| q)
-        tellEx $ p --> Exist x p
+        tellEx $ p --> Exist x1 px1
         tellEx $ Exist x p --> Exist x1 px1
         tellEx $ Exist x p
         tellEx $ Exist x1 px1

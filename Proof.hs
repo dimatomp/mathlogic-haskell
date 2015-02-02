@@ -38,8 +38,9 @@ newtype Proof a = Proof { unProof :: StateT [ProofBuilder] (Either (Int, ErrorRe
                   deriving (Functor, Applicative, Monad, MonadState [ProofBuilder])
 
 eplus res@(Right _) _ = res
+eplus _ res@(Right _) = res
 eplus (Left (_, Nothing)) res = res
-eplus res@(Left _) _ = res
+eplus res _ = res
 
 esum = foldl1 eplus
 
