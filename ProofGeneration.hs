@@ -27,7 +27,7 @@ proveBA a b = do
     tellEx $ b --> a --> b
     tellEx $ a --> b
 
-contraposition a b = assume (a --> b) $ assume (Not b) $ do
+contraposition a b = asRoot $ assume (a --> b) $ assume (Not b) $ do
     tellEx $ a --> b
     tellEx $ Not b
     proveBA a (Not b)
@@ -35,7 +35,7 @@ contraposition a b = assume (a --> b) $ assume (Not b) $ do
     tellEx $ (a --> Not b) --> Not a
     tellEx $ Not a
 
-deMorganOr a b = assume (Not (a ||| b)) $ do
+deMorganOr a b = asRoot $ assume (Not (a ||| b)) $ do
     tellEx $ Not (a ||| b)
     tellEx $ a --> a ||| b
     proveBA a (Not (a ||| b))
@@ -51,7 +51,7 @@ deMorganOr a b = assume (Not (a ||| b)) $ do
     tellEx $ Not b --> Not a &&& Not b
     tellEx $ Not a &&& Not b
 
-aOrNotA a = do
+aOrNotA a = asRoot $ do
     deMorganOr a (Not a)
     tellEx $ Not a &&& Not (Not a) --> Not a
     proveBA (Not (a ||| Not a)) (Not a &&& Not (Not a) --> Not a)
@@ -65,41 +65,46 @@ aOrNotA a = do
     tellEx $ Not (Not (a ||| Not a)) --> a ||| Not a
     tellEx $ a ||| Not a
 
-implicationIsOr a b = assume (a --> b) $ do
-    tellEx $ a --> b
+implicationIsOr a b = asRoot $ do
     contraposition a b
-    tellEx $ Not b --> Not a
-    tellEx $ Not a --> Not a ||| b
-    tellEx $ b --> Not a ||| b
-    proveBA (Not b) (Not a --> Not a ||| b)
-    proveAG (Not b) (Not a) (Not a ||| b)
-    tellEx $ (b --> Not a ||| b) --> (Not b --> Not a ||| b) --> b ||| Not b --> Not a ||| b
-    tellEx $ (Not b --> Not a ||| b) --> b ||| Not b --> Not a ||| b
-    tellEx $ b ||| Not b --> Not a ||| b
     aOrNotA b
-    tellEx $ Not a ||| b
+    assume (a --> b) $ do
+        tellEx $ a --> b
+        tellEx $ (a --> b) --> Not b --> Not a
+        tellEx $ Not b --> Not a
+        tellEx $ Not a --> Not a ||| b
+        tellEx $ b --> Not a ||| b
+        proveBA (Not b) (Not a --> Not a ||| b)
+        proveAG (Not b) (Not a) (Not a ||| b)
+        tellEx $ (b --> Not a ||| b) --> (Not b --> Not a ||| b) --> b ||| Not b --> Not a ||| b
+        tellEx $ (Not b --> Not a ||| b) --> b ||| Not b --> Not a ||| b
+        tellEx $ b ||| Not b --> Not a ||| b
+        tellEx $ b ||| Not b
+        tellEx $ Not a ||| b
 
-deMorganAnd a b = assume (Not (a &&& b)) $ do
-    tellEx $ Not (a &&& b)
-    assume a $ do
-        tellEx $ a
-        tellEx $ a --> b --> a &&& b
-        tellEx $ b --> a &&& b
-        proveBA b (Not (a &&& b))
-        tellEx $ (b --> a &&& b) --> (b --> Not (a &&& b)) --> Not b
-        tellEx $ (b --> Not (a &&& b)) --> Not b
-        tellEx $ Not b
-    tellEx $ Not a --> Not a ||| Not b
-    tellEx $ Not b --> Not a ||| Not b
-    proveBA a (Not b --> Not a ||| Not b)
-    proveAG a (Not b) (Not a ||| Not b)
-    tellEx $ (a --> Not a ||| Not b) --> (Not a --> Not a ||| Not b) --> a ||| Not a --> Not a ||| Not b
-    tellEx $ (Not a --> Not a ||| Not b) --> a ||| Not a --> Not a ||| Not b
-    tellEx $ a ||| Not a --> Not a ||| Not b
+deMorganAnd a b = asRoot $ do
     aOrNotA a
-    tellEx $ Not a ||| Not b
+    assume (Not (a &&& b)) $ do
+        tellEx $ Not (a &&& b)
+        assume a $ do
+            tellEx $ a
+            tellEx $ a --> b --> a &&& b
+            tellEx $ b --> a &&& b
+            proveBA b (Not (a &&& b))
+            tellEx $ (b --> a &&& b) --> (b --> Not (a &&& b)) --> Not b
+            tellEx $ (b --> Not (a &&& b)) --> Not b
+            tellEx $ Not b
+        tellEx $ Not a --> Not a ||| Not b
+        tellEx $ Not b --> Not a ||| Not b
+        proveBA a (Not b --> Not a ||| Not b)
+        proveAG a (Not b) (Not a ||| Not b)
+        tellEx $ (a --> Not a ||| Not b) --> (Not a --> Not a ||| Not b) --> a ||| Not a --> Not a ||| Not b
+        tellEx $ (Not a --> Not a ||| Not b) --> a ||| Not a --> Not a ||| Not b
+        tellEx $ a ||| Not a --> Not a ||| Not b
+        tellEx $ a ||| Not a
+        tellEx $ Not a ||| Not b
 
-intuitionist a b = assume (Not a) $ assume a $ do
+intuitionist a b = asRoot $ assume (Not a) $ assume a $ do
     tellEx $ Not a
     tellEx $ a
     proveBA (Not b) a
@@ -110,25 +115,27 @@ intuitionist a b = assume (Not a) $ assume a $ do
     tellEx $ Not (Not b) --> b
     tellEx $ b
 
-notImplIsAnd a b = assume (Not (a --> b)) $ do
-    tellEx $ Not (a --> b)
-    proveBA (Not a) (Not (a --> b))
+notImplIsAnd a b = asRoot $ do
     intuitionist a b
-    tellEx $ (Not a --> a --> b) --> (Not a --> Not (a --> b)) --> Not (Not a)
-    tellEx $ (Not a --> Not (a --> b)) --> Not (Not a)
-    tellEx $ Not (Not a)
-    tellEx $ Not (Not a) --> a
-    tellEx $ a
-    proveBA b (Not (a --> b))
-    tellEx $ b --> a --> b
-    tellEx $ (b --> a --> b) --> (b --> Not (a --> b)) --> Not b
-    tellEx $ (b --> Not (a --> b)) --> Not b
-    tellEx $ Not b
-    tellEx $ a --> Not b --> a &&& Not b
-    tellEx $ Not b --> a &&& Not b
-    tellEx $ a &&& Not b
+    assume (Not (a --> b)) $ do
+        tellEx $ Not (a --> b)
+        proveBA (Not a) (Not (a --> b))
+        tellEx $ Not a --> a --> b
+        tellEx $ (Not a --> a --> b) --> (Not a --> Not (a --> b)) --> Not (Not a)
+        tellEx $ (Not a --> Not (a --> b)) --> Not (Not a)
+        tellEx $ Not (Not a)
+        tellEx $ Not (Not a) --> a
+        tellEx $ a
+        proveBA b (Not (a --> b))
+        tellEx $ b --> a --> b
+        tellEx $ (b --> a --> b) --> (b --> Not (a --> b)) --> Not b
+        tellEx $ (b --> Not (a --> b)) --> Not b
+        tellEx $ Not b
+        tellEx $ a --> Not b --> a &&& Not b
+        tellEx $ Not b --> a &&& Not b
+        tellEx $ a &&& Not b
 
-inMorganOr a b = do
+inMorganOr a b = asRoot $ do
     forM_ [a, b] $ \wa -> assume (Not wa) $ do
         tellEx $ Not wa
         tellEx $ a &&& b --> wa
@@ -140,7 +147,7 @@ inMorganOr a b = do
     tellEx $ (Not b --> Not (a &&& b)) --> (Not a ||| Not b --> Not (a &&& b))
     tellEx $ Not a ||| Not b --> Not (a &&& b)
 
-addNotNot a = assume a $ do
+addNotNot a = asRoot $ assume a $ do
     tellEx $ a
     proveAA (Not a)
     proveBA (Not a) a
@@ -148,7 +155,7 @@ addNotNot a = assume a $ do
     tellEx $ (Not a --> Not a) --> Not (Not a)
     tellEx $ Not (Not a)
 
-addNotNotToOr a b = do
+addNotNotToOr a b = asRoot $ do
     addNotNot a
     tellEx $ Not (Not a) --> Not (Not a) ||| Not (Not b)
     proveBA a (Not (Not a) --> Not (Not a) ||| Not (Not b))
@@ -161,37 +168,42 @@ addNotNotToOr a b = do
     tellEx $ (b --> Not (Not a) ||| Not (Not b)) --> a ||| b --> Not (Not a) ||| Not (Not b)
     tellEx $ a ||| b --> Not (Not a) ||| Not (Not b)
 
-notAThenB a b = assume (a ||| b) $ assume (Not a) $ do
-    tellEx $ a ||| b
-    tellEx $ Not a
+notAThenB a b = asRoot $ do
     addNotNotToOr a b
-    tellEx $ Not (Not a) ||| Not (Not b)
     inMorganOr (Not a) (Not b)
-    tellEx $ Not (Not a &&& Not b)
-    tellEx $ Not a --> Not b --> Not a &&& Not b
-    tellEx $ Not b --> Not a &&& Not b
-    proveBA (Not b) (Not (Not a &&& Not b))
-    tellEx $ (Not b --> Not a &&& Not b) --> (Not b --> Not (Not a &&& Not b)) --> Not (Not b)
-    tellEx $ (Not b --> Not (Not a &&& Not b)) --> Not (Not b)
-    tellEx $ Not (Not b)
-    tellEx $ Not (Not b) --> b
-    tellEx $ b
+    assume (a ||| b) $ assume (Not a) $ do
+        tellEx $ a ||| b
+        tellEx $ Not a
+        tellEx $ a ||| b --> Not (Not a) ||| Not (Not b)
+        tellEx $ Not (Not a) ||| Not (Not b)
+        tellEx $ Not (Not a) ||| Not (Not b) --> Not (Not a &&& Not b)
+        tellEx $ Not (Not a &&& Not b)
+        tellEx $ Not a --> Not b --> Not a &&& Not b
+        tellEx $ Not b --> Not a &&& Not b
+        proveBA (Not b) (Not (Not a &&& Not b))
+        tellEx $ (Not b --> Not a &&& Not b) --> (Not b --> Not (Not a &&& Not b)) --> Not (Not b)
+        tellEx $ (Not b --> Not (Not a &&& Not b)) --> Not (Not b)
+        tellEx $ Not (Not b)
+        tellEx $ Not (Not b) --> b
+        tellEx $ b
 
-inMorganAnd a b = assume (Not a &&& Not b) $ do
-    tellEx $ Not a &&& Not b
-    tellEx $ Not a &&& Not b --> Not a
-    tellEx $ Not a
-    proveBA (a ||| b) (Not a)
+inMorganAnd a b = asRoot $ do
     notAThenB a b
-    proveAG (a ||| b) (Not a) b
-    tellEx $ Not a &&& Not b --> Not b
-    tellEx $ Not b
-    proveBA (a ||| b) (Not b)
-    tellEx $ (a ||| b --> b) --> (a ||| b --> Not b) --> Not (a ||| b)
-    tellEx $ (a ||| b --> Not b) --> Not (a ||| b)
-    tellEx $ Not (a ||| b)
+    assume (Not a &&& Not b) $ do
+        tellEx $ Not a &&& Not b
+        tellEx $ Not a &&& Not b --> Not a
+        tellEx $ Not a
+        proveBA (a ||| b) (Not a)
+        tellEx $ a ||| b --> Not a --> b
+        proveAG (a ||| b) (Not a) b
+        tellEx $ Not a &&& Not b --> Not b
+        tellEx $ Not b
+        proveBA (a ||| b) (Not b)
+        tellEx $ (a ||| b --> b) --> (a ||| b --> Not b) --> Not (a ||| b)
+        tellEx $ (a ||| b --> Not b) --> Not (a ||| b)
+        tellEx $ Not (a ||| b)
 
-notAndIsImpl a b = assume (a &&& Not b) $ do
+notAndIsImpl a b = asRoot $ assume (a &&& Not b) $ do
     tellEx $ a &&& Not b
     tellEx $ a &&& Not b --> a
     tellEx $ a
@@ -205,13 +217,15 @@ notAndIsImpl a b = assume (a &&& Not b) $ do
     tellEx $ ((a --> b) --> Not b) --> Not (a --> b)
     tellEx $ Not (a --> b)
 
-notAThenBIsOr a b = do
+notAThenBIsOr a b = asRoot $ do
     contraposition (Not (a ||| b)) (Not (Not a --> b))
+    deMorganOr a b
+    notAndIsImpl (Not a) b
     assume (Not (a ||| b)) $ do
         tellEx $ Not (a ||| b)
-        deMorganOr a b
+        tellEx $ Not (a ||| b) --> Not a &&& Not b
         tellEx $ Not a &&& Not b
-        notAndIsImpl (Not a) b
+        tellEx $ Not a &&& Not b --> Not (Not a --> b)
         tellEx $ Not (Not a --> b)
     tellEx $ Not (Not (Not a --> b)) --> Not (Not (a ||| b))
     addNotNot (Not a --> b)
@@ -220,6 +234,13 @@ notAThenBIsOr a b = do
     tellEx $ Not (Not (a ||| b)) --> a ||| b
     proveBA (Not a --> b) (Not (Not (a ||| b)) --> a ||| b)
     proveAG (Not a --> b) (Not (Not (a ||| b))) (a ||| b)
+
+contradiction p right = do
+    tellEx $ p
+    tellEx $ Not p
+    tellEx $ Not p --> p --> right
+    tellEx $ p --> right
+    tellEx $ right
 
 proveStmt :: Expression -> Proof ProofStatement
 proveStmt toBeProved@(Implication left right) = case left of
@@ -261,18 +282,12 @@ proveStmt toBeProved@(Implication left right) = case left of
         proveStmt $ p --> right
         proveBA (Not (Not p)) (p --> right)
         proveAG (Not (Not p)) p right
-    Not p -> assume left $ tellEx left >> ((do
-                tellEx $ p
-                intuitionist p right
-                tellEx $ p --> right
-                tellEx $ right
-                ) <|> proveStmt right)
-    p -> assume left $ tellEx left >> ((do
-             tellEx $ Not p
-             intuitionist p right
-             tellEx $ p --> right
-             tellEx right
-             ) <|> proveStmt right)
+    Not p -> do
+        intuitionist p right
+        assume left $ contradiction p right <|> proveStmt right
+    p -> do
+        intuitionist p right
+        assume left $ contradiction p right <|> proveStmt right
 proveStmt toBeProved@(And left right) = do
     tellEx $ left
     tellEx $ right

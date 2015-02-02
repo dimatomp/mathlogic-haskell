@@ -10,6 +10,9 @@ type ErrorReport = Maybe ErrorMessage
 
 type Axiom = Expression -> Either ErrorReport ()
 
+supposition :: Expression -> Axiom
+supposition supp expr = if expr == supp then Right () else Left Nothing
+
 justMatch patt expr = if patt `matches` expr then Right () else Left Nothing
 
 basicAxioms :: [Axiom]

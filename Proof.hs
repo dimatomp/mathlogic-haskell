@@ -18,7 +18,6 @@ import Expression
 import Axioms
 
 --import Debug.Trace
-trace _ = id
 
 data ProofStatement = AxiomStatement { getExpression :: Expression, getNum :: Int }
                     | ModusPonens { getExpression :: Expression
@@ -84,6 +83,15 @@ getLog = gets $ \(top:_) -> reverse $ case top of
 getRootLog :: Proof [ProofStatement]
 getRootLog = gets $ \l -> let Root _ _ _ list = last l in reverse list
 
+asRoot :: Proof ProofStatement -> Proof ProofStatement
+asRoot proof = do
+    oldState <- get
+    put [last oldState]
+    result <- liftM getExpression proof
+    newRoot <- get
+    put $ init oldState ++ newRoot
+    tellEx result
+
 tellRec :: [ProofBuilder] -> Expression -> Either (Int, ErrorReport) (ProofStatement, [ProofBuilder])
 tellRec [Root axioms proved mp log] expr =
     let wrapMaybe (Just res) = Right res
@@ -100,23 +108,26 @@ tellRec [Root axioms proved mp log] expr =
             left <- esum $ map (wrapMaybe . (`lookup` proved)) list
             let impl = fromJust $ lookup (getExpression left --> expr) proved
             return $ ModusPonens expr left impl
-        tryPredicates = case expr of
+        tryExistence = case expr of
             Implication (Exist x a) b -> do
                 from <- wrapMaybe $ lookup (a --> b) proved
                 when (hasOccurrences x b) $ wrap $ FreeOccurrence x b
                 return $ Exists expr from
+            _ -> wrapMaybe Nothing
+        tryForall = case expr of
             Implication a (Forall x b) -> do
                 from <- wrapMaybe $ lookup (a --> b) proved
                 when (hasOccurrences x a) $ wrap $ FreeOccurrence x a
                 return $ Any expr from
             _ -> wrapMaybe Nothing
     in do
-        result <- trace ("1: " ++ show expr) $ checkProved `eplus` tryAxioms `eplus` tryMP `eplus` tryPredicates
+        result <- {-trace ("1: " ++ show expr) $ -}checkProved `eplus` tryAxioms `eplus` tryMP `eplus` tryExistence `eplus` tryForall
         let newProved = insert expr result proved
             newMP = case expr of
                 Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (L.insert l list) mp
                 _ -> mp
-        trace ("1: Success") $ return (result, [Root axioms newProved newMP (result:log)])
+        {-trace ("1: Success") $-}
+        return (result, [Root axioms newProved newMP (result:log)])
 tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (length log, err)) $
     let wrapMaybe (Just res) = Right res
         wrapMaybe Nothing = Left (length log, Nothing)
@@ -124,12 +135,7 @@ tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (leng
         retrieve expr =
             let grown = foldl (flip (-->)) expr $ map (\(Assumption s _ _) -> s) $ init stack
                 Root _ table _ _ = last tail
-            in trace ("Checking for " ++ show grown) $ liftM (, tail) $ wrapMaybe $ lookup grown table
-        --checkProved =
-        --    let scanned = scanl (flip (-->)) (supp --> expr) $ map (\(Assumption s _ _) -> s) $ init tail
-        --        applied = zipWith (\e (Assumption s m l) -> Assumption s m (e:l)) scanned $ init tail
-        --        Root s t m l = last tail
-        --    in liftM (\res -> (res, applied ++ [Root s t m (res:l)])) $ wrapMaybe $ lookup (last scanned) t
+            in {-trace ("Checking for " ++ show grown) $ -}liftM (, tail) $ wrapMaybe $ lookup grown table
         itsMe = do
             when (expr /= supp) $ wrapMaybe Nothing
             (_, tail) <- tellRec tail $ expr --> expr --> expr
@@ -153,7 +159,7 @@ tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (leng
             tellEx $ b --> c
             tellEx $ b
             tellEx $ c
-        tryPredicates = case expr of
+        tryExistence = case expr of
             Implication (Exist x a) b -> do
                 retrieve $ a --> b
                 when (hasOccurrences x b) $ wrap $ FreeOccurrence x b
@@ -161,6 +167,8 @@ tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (leng
                 (_, tail) <- runProof (swapArgs supp a b) tail
                 (_, tail) <- tellRec tail $ Exist x a --> supp --> b
                 runProof (swapArgs (Exist x a) supp b) tail
+            _ -> wrapMaybe Nothing
+        tryForall = case expr of
             Implication a (Forall x b) -> do
                 retrieve $ a --> b
                 when (hasOccurrences x a) $ wrap $ FreeOccurrence x a
@@ -185,12 +193,13 @@ tellRec stack@(Assumption supp mp log : tail) expr = mapLeft (\(_, err) -> (leng
                     tellEx $ Forall x b
             _ -> wrapMaybe Nothing
     in do
-        (result, tail) <- trace (show (length stack) ++ ": " ++ show expr) $
-            {-checkProved `eplus` -}itsMe `eplus` whoKnows `eplus` tryMP `eplus` tryPredicates
+        (result, tail) <- {-trace (show (length stack) ++ ": " ++ show expr) $-}
+            {-checkProved `eplus` -}itsMe `eplus` whoKnows `eplus` tryMP `eplus` tryExistence `eplus` tryForall
         let newMP = case expr of
                 Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (L.insert l list) mp
                 _ -> mp
-        trace (show (length stack) ++ ": Success") $ return (result, Assumption supp newMP (expr:log) : tail)
+        {-trace (show (length stack) ++ ": Success") $-}
+        return (result, Assumption supp newMP (expr:log) : tail)
     where
         mapLeft f (Left a) = Left (f a)
         mapLeft _ res = res
