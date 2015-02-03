@@ -7,8 +7,6 @@ import ProofGeneration
 import Control.Applicative (Alternative(..))
 import Control.Monad
 
---import Debug.Trace
-
 mapQ :: Expression -> Expression -> Proof Expression
 mapQ (Forall x p) q = assume (Forall x (p --> q)) $ do
     assume (Forall x p) $ do
@@ -22,12 +20,14 @@ mapQ (Forall x p) q = assume (Forall x (p --> q)) $ do
     tellEx $ Forall x p --> Forall x q
     return $ Forall x (p --> q) --> Forall x p --> Forall x q
 mapQ (Exist x p) q = assume (Forall x (p --> q)) $ assume (Exist x p) $ do
+    tellEx $ Forall x (p --> q)
     tellEx $ Forall x (p --> q) --> p --> q
     tellEx $ p --> q
-    tellEx $ Exist x p --> q
-    tellEx $ Exist x p
-    tellEx $ q
     tellEx $ q --> Exist x q
+    proveBA p (q --> Exist x q)
+    proveAG p q (Exist x q)
+    tellEx $ Exist x p --> Exist x q
+    tellEx $ Exist x p
     tellEx $ Exist x q
     return $ Forall x (p --> q) --> Exist x p --> Exist x q
 

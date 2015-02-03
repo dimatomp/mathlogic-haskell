@@ -15,9 +15,6 @@ import qualified Data.ByteString.Char8 as B
 
 import Expression
 
-import Debug.Trace
---trace _ = id
-
 type Parser = StateT B.ByteString Maybe
 
 allowChar :: (Char -> Bool) -> Parser Char
