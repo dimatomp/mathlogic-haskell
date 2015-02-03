@@ -43,6 +43,7 @@ liftQuantifiers expr = tellEx expr >> loop expr >> getLog
     where
         loop expr = (do
             result <- extractQ expr
+            {-trace (replicate 79 '-') $ -}
             tellEx $ result
             loop result) <|> return ()
 
@@ -73,8 +74,9 @@ extractQ (Not (Forall x p)) = assume (Not (Forall x p)) $ do
     tellEx $ Not (Not (Exist x (Not p))) --> Exist x (Not p)
     tellEx $ Exist x (Not p)
     return $ Exist x (Not p)
-extractQ (Not (Not (Forall x e))) = assume (Not (Not (Forall x e))) $ do
+extractQ (Not (Not (Forall x e))) = {-trace (show $ Not (Not (Forall x e))) $ -}assume (Not (Not (Forall x e))) $ do
     tellEx $ Not (Not (Forall x e)) --> Forall x e
+    tellEx $ Not (Not (Forall x e))
     tellEx $ Forall x e
     addNotNot e
     proveBA (Forall x e) (e --> Not (Not e))
@@ -113,7 +115,7 @@ extractQ (Not (Not e)) = extractQ e >>= \result -> assume (Not (Not e)) $ do
     tellEx $ result --> ctr x (Not (Not e))
     tellEx $ ctr x (Not (Not e))
     return $ ctr x (Not (Not e))
-extractQ (Not (And l r)) = extractQ (Not l ||| Not r) >>= \final -> assume (Not (l &&& r)) $ do
+extractQ (Not (And l r)) = {-trace (show $ Not (l &&& r)) $ -}extractQ (Not l ||| Not r) >>= \final -> assume (Not (l &&& r)) $ do
     deMorganAnd l r
     tellEx $ Not (l &&& r)
     tellEx $ Not l ||| Not r
@@ -158,8 +160,8 @@ extractQ (Not (Implication l r)) = extractQ (l &&& Not r) >>= \result -> assume 
             Forall x (And l (Not r)) -> (Forall, x, l, r)
     notAndIsImpl l r
     proveBA result (l &&& Not r --> Not (l --> r))
-    tellEx $ result --> Forall x (l &&& r --> Not (l --> r))
-    tellEx $ Forall x (l &&& r --> Not (l --> r))
+    tellEx $ result --> Forall x (l &&& Not r --> Not (l --> r))
+    tellEx $ Forall x (l &&& Not r --> Not (l --> r))
     mapQ result (Not (l --> r))
     tellEx $ result --> ctr x (Not (l --> r))
     tellEx $ ctr x (Not (l --> r))
@@ -241,7 +243,7 @@ extractQ (And q (Exist x p)) = do
         tellEx $ Exist x1 px1
         tellEx $ Exist x1 (q &&& px1)
         return $ Exist x1 (q &&& px1)
-extractQ (And l r) = fromSide l (\res -> res --> r --> res &&& r) <|> fromSide r (\res -> l --> res --> l &&& res)
+extractQ (And l r) = fromSide l (\res -> res --> r --> res &&& r)<|> fromSide r (\res -> l --> res --> l &&& res)
     where
         fromSide w ret = do
             result <- extractQ w
@@ -337,7 +339,7 @@ extractQ (Or q (Exist x p)) = do
     tellEx $ (Exist x p --> Exist x1 (q ||| px1)) --> q ||| Exist x p --> Exist x1 (q ||| px1)
     tellEx $ q ||| Exist x p --> Exist x1 (q ||| px1)
     return $ Exist x1 (q ||| px1)
-extractQ (Or l r) = fromSide l r (||| r) <|> fromSide r l (l |||)
+extractQ (Or l r) = fromSide l r (||| r)<|> fromSide r l (l |||)
     where
         fromSide w o ret = do
             result <- extractQ w
