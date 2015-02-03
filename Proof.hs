@@ -76,8 +76,11 @@ tellEx expr = Proof $ StateT (`tellRec` expr)
 tryTell :: Expression -> Proof (Either Expression ProofStatement)
 tryTell expr = liftM Right (tellEx expr) <|> return (Left expr)
 
+getRootLog :: Proof [ProofStatement]
+getRootLog = gets $ (\(Root _ _ _ l) -> reverse l) . last
+
 getLog :: Proof [Expression]
-getLog = gets $ (\(Root _ _ _ l) -> reverse $ map getExpression l) . last
+getLog = liftM (map getExpression) getRootLog
 
 asRoot :: Proof ProofStatement -> Proof ProofStatement
 asRoot proof = do

@@ -16,10 +16,14 @@ import Control.Monad
 data NumberedStatement = NumUnproved Expression Int
                        | NumAxiom Expression Int Int
                        | NumModusPonens Expression Int Int Int
+                       | NumAny Expression Int Int
+                       | NumExist Expression Int Int
 
-getNumber (NumUnproved _ num) = num
-getNumber (NumAxiom _ _ num) = num
-getNumber (NumModusPonens _ _ _ num) = num
+getContent (NumUnproved e _) = e
+getContent (NumAxiom e _ _) = e
+getContent (NumModusPonens e _ _ _) = e
+getContent (NumAny e _ _) = e
+getContent (NumExist e _ _) = e
 
 showPref expr num = "(" ++ show num ++ ") " ++ show expr ++ " "
 
@@ -39,6 +43,14 @@ getNumberedProof stmt =
                         leftNum = nMap ! getExpression left
                         rightNum = nMap ! getExpression right
                     in (nNum + 1, insert expr nNum nMap, NumModusPonens expr leftNum rightNum nNum : nRes)
+                Any expr from ->
+                    let (nNum, nMap, nRes) = process (num, map, res) from
+                        fromNum = nMap ! getExpression from
+                    in (nNum + 1, insert expr nNum nMap, NumAny expr fromNum nNum : nRes)
+                Exists expr from ->
+                    let (nNum, nMap, nRes) = process (num, map, res) from
+                        fromNum = nMap ! getExpression from
+                    in (nNum + 1, insert expr nNum nMap, NumExist expr fromNum nNum : nRes)
         (_, _, result) = process (1, empty, []) stmt
     in reverse result
 

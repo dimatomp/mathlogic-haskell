@@ -21,4 +21,4 @@ main = do
         Right proof -> forM_ (getNumberedProof proof) print
         Left _ -> let Just list = traceExpr inputData
                       output = map (\(str, val) -> unpack str ++ "=" ++ if val then "И" else "Л") list
-                  in putStrLn $ "Высказывание ложно при " ++ intercalate ", " output ++ "\n"
+                  in putStrLn $ "Высказывание ложно при " ++ intercalate ", " output

@@ -38,8 +38,8 @@ orIsImplication a b = asRoot $ assume (Not a ||| b) $ do
     proveBA a (Not (Not a) --> b)
     proveAG a (Not (Not a)) b
 
-liftQuantifiers :: Expression -> Proof [Expression]
-liftQuantifiers expr = tellEx expr >> loop expr >> getLog
+liftQuantifiers :: Expression -> Proof ()
+liftQuantifiers expr = tellEx expr >> loop expr
     where
         loop expr = (do
             result <- extractQ expr
@@ -243,7 +243,7 @@ extractQ (And q (Exist x p)) = do
         tellEx $ Exist x1 px1
         tellEx $ Exist x1 (q &&& px1)
         return $ Exist x1 (q &&& px1)
-extractQ (And l r) = fromSide l (\res -> res --> r --> res &&& r)<|> fromSide r (\res -> l --> res --> l &&& res)
+extractQ (And l r) = fromSide l (\res -> res --> r --> res &&& r) <|> fromSide r (\res -> l --> res --> l &&& res)
     where
         fromSide w ret = do
             result <- extractQ w
@@ -339,7 +339,7 @@ extractQ (Or q (Exist x p)) = do
     tellEx $ (Exist x p --> Exist x1 (q ||| px1)) --> q ||| Exist x p --> Exist x1 (q ||| px1)
     tellEx $ q ||| Exist x p --> Exist x1 (q ||| px1)
     return $ Exist x1 (q ||| px1)
-extractQ (Or l r) = fromSide l r (||| r)<|> fromSide r l (l |||)
+extractQ (Or l r) = fromSide l r (||| r) <|> fromSide r l (l |||)
     where
         fromSide w o ret = do
             result <- extractQ w
