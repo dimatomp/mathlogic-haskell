@@ -10,7 +10,12 @@ import Axioms
 import ProofUtils
 
 main = do
-    (fin:_) <- getArgs
-    inputData <- parseFromFile parseProof fin
-    let Right proof = flip evalProof (initBuilder $ basicAxioms ++ [classicAxiom]) $ forM inputData tryTell
-    forM_ (getLoggedProof proof) print
+    argList <- getArgs
+    if not $ null argList
+        then do let fin = head argList
+                inputData <- parseFromFile parseProof fin
+                let Right proof = flip evalProof (initBuilder $ basicAxioms ++ [classicAxiom]) $ forM inputData tryTell
+                forM_ (getLoggedProof proof) print
+        else do name <- getProgName
+                putStrLn $ "Использование: " ++ name ++ " <имя входного файла>"
+                putStrLn $ "Поддерживаются файлы конечного размера (не /dev/stdin)"
