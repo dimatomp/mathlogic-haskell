@@ -7,6 +7,7 @@ import Data.List
 import Data.ByteString.Char8 (unpack)
 
 import Control.Monad
+import Control.Applicative ((<|>))
 
 import System.Environment
 
@@ -14,7 +15,7 @@ main = do
     argList <- getArgs
     if not $ null argList
         then do let fin = head argList
-                ((supp, stmt), inputData) <- parseFromFile parseWhole fin
+                ((supp, stmt), inputData) <- parseFromFile (parseWhole <|> liftM (\list -> (([], last list), list)) parseProof) fin
                 let suppInit = if null supp then [] else init supp
                     builder = initBuilder $ basicAxioms ++ [classicAxiom] ++ predAxioms ++ arithAxioms ++ map supposition suppInit
                     sandbox = flip evalProof builder $ ((if null supp then id else assume $ last supp) $ forM_ inputData tellEx) >> getLog
