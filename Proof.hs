@@ -17,8 +17,6 @@ import Control.Monad.State
 import Expression
 import Axioms
 
---import Debug.Trace
-
 data ProofStatement = AxiomStatement { getExpression :: Expression, getNum :: Int }
                     | ModusPonens { getExpression :: Expression
                                   , getFrom :: ProofStatement, getImpl :: ProofStatement }
@@ -71,7 +69,10 @@ assume expr proof = do
     return res
 
 tellEx :: Expression -> Proof ProofStatement
-tellEx expr = Proof $ StateT (`tellRec` expr)
+tellEx expr = Proof $ StateT $ \dat -> tellRec whoKnows dat expr
+
+tellStrict :: Expression -> Proof ProofStatement
+tellStrict expr = Proof $ StateT $ \dat -> tellRec checkStrict dat expr
 
 tryTell :: Expression -> Proof (Either Expression ProofStatement)
 tryTell expr = liftM Right (tellEx expr) <|> return (Left expr)
@@ -91,13 +92,30 @@ asRoot proof = do
     put $ init oldState ++ newRoot
     tellEx result
 
-tellRec :: [ProofBuilder] -> Expression -> Either (Int, ErrorReport) (ProofStatement, [ProofBuilder])
-tellRec [Root axioms proved mp log] expr =
+mapBoth _ f (Right r) = Right (f r)
+mapBoth f _ (Left l) = Left (f l)
+
+whoKnows :: Expression -> Expression -> [ProofBuilder] -> Either (Int, ErrorReport) (ProofStatement, [ProofBuilder])
+whoKnows supp expr tail = do
+    (_, tail) <- tellRec whoKnows tail expr
+    (_, tail) <- tellRec whoKnows tail $ expr --> supp --> expr
+    tellRec whoKnows tail $ supp --> expr
+
+checkStrict :: Expression -> Expression -> [ProofBuilder] -> Either (Int, ErrorReport) (ProofStatement, [ProofBuilder])
+checkStrict supp expr tail = checkForSupposition `eplus` tryAxioms
+    where
+        Root axioms _ _ log = last tail
+        tryAxioms = do
+            esum $ zipWith (\num f -> mapBoth (length log,) (const num) (f expr)) [1..] axioms
+            whoKnows supp expr tail
+        checkForSupposition = if any (\(Assumption supp _) -> supp == expr) $ init tail
+            then whoKnows supp expr tail
+            else Left (length log, Nothing)
+
+tellRec _ [Root axioms proved mp log] expr =
     let wrapMaybe (Just res) = Right res
         wrapMaybe Nothing = Left (length log, Nothing)
         wrap a = Left (length log, Just a)
-        mapBoth _ f (Right r) = Right (f r)
-        mapBoth f _ (Left l) = Left (f l)
         checkProved = wrapMaybe $ lookup expr proved
         tryAxioms = do
             number <- esum $ zipWith (\num f -> mapBoth (length log,) (const num) (f expr)) [1..] axioms
@@ -127,7 +145,7 @@ tellRec [Root axioms proved mp log] expr =
                 _ -> mp
         {-trace ("1: Success") $-}
         return (result, [Root axioms newProved newMP (result:log)])
-tellRec stack@(Assumption supp mp : tail) expr =
+tellRec whoKnows stack@(Assumption supp mp : tail) expr =
     let rootLength = let Root _ _ _ l = last tail in length l
         wrapMaybe (Just res) = Right res
         wrapMaybe Nothing = Left (rootLength, Nothing)
@@ -136,23 +154,20 @@ tellRec stack@(Assumption supp mp : tail) expr =
             let grown = foldl (flip (-->)) expr $ map (\(Assumption s _) -> s) $ init stack
                 Root _ table _ _ = last tail
             in {-trace ("Checking for " ++ show grown) $ -}liftM (, tail) $ wrapMaybe $ lookup grown table
+        tellR = tellRec whoKnows
         itsMe = do
             when (expr /= supp) $ wrapMaybe Nothing
-            (_, tail) <- tellRec tail $ expr --> expr --> expr
-            (_, tail) <- tellRec tail $ expr --> (expr --> expr) --> expr
-            (_, tail) <- tellRec tail $ (expr --> (expr --> expr)) --> (expr --> (expr --> expr) --> expr) --> expr --> expr
-            (_, tail) <- tellRec tail $ (expr --> (expr --> expr) --> expr) --> expr --> expr
-            tellRec tail $ expr --> expr
-        whoKnows = do
-            (_, tail) <- tellRec tail expr
-            (_, tail) <- tellRec tail $ expr --> supp --> expr
-            tellRec tail $ supp --> expr
+            (_, tail) <- tellR tail $ expr --> expr --> expr
+            (_, tail) <- tellR tail $ expr --> (expr --> expr) --> expr
+            (_, tail) <- tellR tail $ (expr --> (expr --> expr)) --> (expr --> (expr --> expr) --> expr) --> expr --> expr
+            (_, tail) <- tellR tail $ (expr --> (expr --> expr) --> expr) --> expr --> expr
+            tellR tail $ expr --> expr
         tryMP = do
             list <- wrapMaybe $ lookup expr mp
             left <- esum $ map (liftM2 (>>) retrieve return) list
-            (_, tail) <- tellRec tail $ (supp --> left) --> (supp --> left --> expr) --> supp --> expr
-            (_, tail) <- tellRec tail $ (supp --> left --> expr) --> supp --> expr
-            tellRec tail $ supp --> expr
+            (_, tail) <- tellR tail $ (supp --> left) --> (supp --> left --> expr) --> supp --> expr
+            (_, tail) <- tellR tail $ (supp --> left --> expr) --> supp --> expr
+            tellR tail $ supp --> expr
         swapArgs a b c = assume b $ assume a $ do
             tellEx $ a --> b --> c
             tellEx $ a
@@ -165,7 +180,7 @@ tellRec stack@(Assumption supp mp : tail) expr =
                 when (hasOccurrences x b) $ wrap $ FreeOccurrence x b
                 when (hasOccurrences x supp) $ wrap $ BadRuleUsage x supp
                 (_, tail) <- runProof (swapArgs supp a b) tail
-                (_, tail) <- tellRec tail $ Exist x a --> supp --> b
+                (_, tail) <- tellR tail $ Exist x a --> supp --> b
                 runProof (swapArgs (Exist x a) supp b) tail
             _ -> wrapMaybe Nothing
         tryForall = case expr of
@@ -182,7 +197,7 @@ tellRec stack@(Assumption supp mp : tail) expr =
                     tellEx $ supp --> a --> b
                     tellEx $ a --> b
                     tellEx $ b
-                (_, tail) <- tellRec tail $ supp &&& a --> Forall x b
+                (_, tail) <- tellR tail $ supp &&& a --> Forall x b
                 flip runProof tail $ assume supp $ assume a $ do
                     tellEx $ supp
                     tellEx $ a
@@ -194,7 +209,7 @@ tellRec stack@(Assumption supp mp : tail) expr =
             _ -> wrapMaybe Nothing
     in do
         (result, tail) <- {-trace (show (length stack) ++ ": " ++ show expr) $-}
-            {-checkProved `eplus` -}itsMe `eplus` whoKnows `eplus` tryMP `eplus` tryExistence `eplus` tryForall
+            {-checkProved `eplus` -}itsMe `eplus` whoKnows supp expr tail `eplus` tryMP `eplus` tryExistence `eplus` tryForall
         let newMP = case expr of
                 Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (L.insert l list) mp
                 _ -> mp

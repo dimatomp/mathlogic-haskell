@@ -18,7 +18,7 @@ main = do
                 ((supp, stmt), inputData) <- parseFromFile (parseWhole <|> liftM (\list -> (([], last list), list)) parseProof) fin
                 let suppInit = if null supp then [] else init supp
                     builder = initBuilder $ basicAxioms ++ [classicAxiom] ++ predAxioms ++ arithAxioms ++ map supposition suppInit
-                    sandbox = flip evalProof builder $ ((if null supp then id else assume $ last supp) $ forM_ inputData tellEx) >> getLog
+                    sandbox = flip evalProof builder $ ((if null supp then id else assume $ last supp) $ forM_ inputData tellStrict) >> getLog
                     result = if null supp then stmt else last supp --> stmt
                     prefix = "Вывод некорректен начиная с формулы номер "
                 case sandbox of
