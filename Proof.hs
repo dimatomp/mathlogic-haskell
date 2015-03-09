@@ -27,7 +27,7 @@ instance Show ProofStatement where
     show = show . getExpression
 
 data ProofBuilder = Root [Axiom] (HashMap Expression ProofStatement) (HashMap Expression [Expression]) [ProofStatement]
-                  | Assumption Expression (HashMap Expression [Expression])
+                  | Assumption Expression (HashMap Expression [Expression]) Int
 
 initBuilder :: [Axiom] -> [ProofBuilder]
 initBuilder axioms = [Root axioms H.empty H.empty []]
@@ -35,15 +35,33 @@ initBuilder axioms = [Root axioms H.empty H.empty []]
 newtype Proof a = Proof { unProof :: StateT [ProofBuilder] (Either (Int, ErrorReport)) a }
                   deriving (Functor, Applicative, Monad, MonadState [ProofBuilder])
 
-eplus res@(Right _) _ = res
-eplus _ res@(Right _) = res
-eplus (Left (_, Nothing)) res = res
-eplus res _ = res
+proof = Proof . StateT
 
-esum = foldl1 eplus
+class EitherPlus e where
+    eplus :: Either e r -> Either e r -> Either e r
+
+    esum :: [Either e r] -> Either e r
+    esum = foldl1 eplus
+
+instance EitherPlus ErrorReport where
+    eplus res@(Right _) _ = res
+    eplus _ res@(Right _) = res
+    eplus (Left Nothing) res = res
+    eplus res _ = res
+
+instance EitherPlus (Int, ErrorReport) where
+    eplus res@(Right _) _ = res
+    eplus _ res@(Right _) = res
+    eplus (Left (_, Nothing)) res = res
+    eplus res _ = res
+
+getLineNumber :: Proof Int
+getLineNumber = proof $ \list@(frame:_) -> Right $ (, list) $ case frame of
+    Root _ _ _ log -> length log
+    Assumption _ _ ln -> ln
 
 instance Alternative Proof where
-    empty = liftM length getLog >>= \len -> Proof (StateT $ \_ -> Left (len, Nothing))
+    empty = getLineNumber >>= \len -> Proof (StateT $ \_ -> Left (len, Nothing))
     a <|> b = Proof $ StateT $ liftM2 eplus (runProof a) (runProof b)
 
 runProof :: Proof a -> [ProofBuilder] -> Either (Int, ErrorReport) (a, [ProofBuilder])
@@ -56,7 +74,7 @@ execProof :: Proof a -> [ProofBuilder] -> Either (Int, ErrorReport) [ProofBuilde
 execProof = execStateT . unProof
 
 addAssumption :: Expression -> Proof ()
-addAssumption expr = modify (Assumption expr H.empty :)
+addAssumption expr = modify (Assumption expr H.empty 0 :)
 
 remAssumption :: Proof ()
 remAssumption = modify tail
@@ -67,6 +85,10 @@ assume expr proof = do
     res <- proof
     remAssumption
     return res
+
+lineNumber :: [ProofBuilder] -> Int
+lineNumber (Root _ _ _ log : _) = length log
+lineNumber (Assumption _ _ ln : _) = ln
 
 tellEx :: Expression -> Proof ProofStatement
 tellEx expr = Proof $ StateT $ \dat -> tellRec whoKnows dat expr
@@ -94,24 +116,27 @@ asRoot proof = do
 
 mapBoth _ f (Right r) = Right (f r)
 mapBoth f _ (Left l) = Left (f l)
+mapRight = mapBoth id
+mapLeft = (`mapBoth` id)
 
-whoKnows :: Expression -> Expression -> [ProofBuilder] -> Either (Int, ErrorReport) (ProofStatement, [ProofBuilder])
+whoKnows :: Expression -> Expression -> [ProofBuilder] -> Either ErrorReport (ProofStatement, [ProofBuilder])
 whoKnows supp expr tail = do
-    (_, tail) <- tellRec whoKnows tail expr
-    (_, tail) <- tellRec whoKnows tail $ expr --> supp --> expr
-    tellRec whoKnows tail $ supp --> expr
+    (_, tail) <- mapLeft snd $ tellRec whoKnows tail expr
+    (_, tail) <- mapLeft snd $ tellRec whoKnows tail $ expr --> supp --> expr
+    mapLeft snd $ tellRec whoKnows tail $ supp --> expr
 
-checkStrict :: Expression -> Expression -> [ProofBuilder] -> Either (Int, ErrorReport) (ProofStatement, [ProofBuilder])
+checkStrict :: Expression -> Expression -> [ProofBuilder] -> Either ErrorReport (ProofStatement, [ProofBuilder])
 checkStrict supp expr tail = checkForSupposition `eplus` tryAxioms
     where
-        Root axioms _ _ log = last tail
+        Root axioms _ _ _ = last tail
         tryAxioms = do
-            esum $ zipWith (\num f -> mapBoth (length log,) (const num) (f expr)) [1..] axioms
+            esum $ zipWith (\num f -> mapRight (const num) (f expr)) [1..] axioms
             whoKnows supp expr tail
-        checkForSupposition = if any (\(Assumption supp _) -> supp == expr) $ init tail
+        checkForSupposition = if any (\(Assumption supp _ _) -> supp == expr) $ init tail
             then whoKnows supp expr tail
-            else Left (length log, Nothing)
+            else Left Nothing
 
+tellRec :: (Expression -> Expression -> [ProofBuilder] -> Either ErrorReport (ProofStatement, [ProofBuilder])) -> [ProofBuilder] -> Expression -> Either (Int, ErrorReport) (ProofStatement, [ProofBuilder])
 tellRec _ [Root axioms proved mp log] expr =
     let wrapMaybe (Just res) = Right res
         wrapMaybe Nothing = Left (length log, Nothing)
@@ -138,22 +163,20 @@ tellRec _ [Root axioms proved mp log] expr =
                 return $ Any expr from
             _ -> wrapMaybe Nothing
     in do
-        result <- {-trace ("1: " ++ show expr) $ -}checkProved `eplus` tryAxioms `eplus` tryMP `eplus` tryExistence `eplus` tryForall
+        result <- checkProved `eplus` tryAxioms `eplus` tryMP `eplus` tryExistence `eplus` tryForall
         let newProved = insert expr result proved
             newMP = case expr of
                 Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (L.insert l list) mp
                 _ -> mp
-        {-trace ("1: Success") $-}
         return (result, [Root axioms newProved newMP (result:log)])
-tellRec whoKnows stack@(Assumption supp mp : tail) expr =
-    let rootLength = let Root _ _ _ l = last tail in length l
-        wrapMaybe (Just res) = Right res
-        wrapMaybe Nothing = Left (rootLength, Nothing)
-        wrap a = Left (rootLength, Just a)
+tellRec whoKnows stack@(Assumption supp mp lineNumber : tail) expr =
+    let wrapMaybe (Just res) = Right res
+        wrapMaybe Nothing = Left (lineNumber, Nothing)
+        wrap a = Left (lineNumber, Just a)
         retrieve expr =
-            let grown = foldl (flip (-->)) expr $ map (\(Assumption s _) -> s) $ init stack
+            let grown = foldl (flip (-->)) expr $ map (\(Assumption s _ _) -> s) $ init stack
                 Root _ table _ _ = last tail
-            in {-trace ("Checking for " ++ show grown) $ -}liftM (, tail) $ wrapMaybe $ lookup grown table
+            in liftM (, tail) $ wrapMaybe $ lookup grown table
         tellR = tellRec whoKnows
         itsMe = do
             when (expr /= supp) $ wrapMaybe Nothing
@@ -208,10 +231,8 @@ tellRec whoKnows stack@(Assumption supp mp : tail) expr =
                     tellEx $ Forall x b
             _ -> wrapMaybe Nothing
     in do
-        (result, tail) <- {-trace (show (length stack) ++ ": " ++ show expr) $-}
-            {-checkProved `eplus` -}itsMe `eplus` whoKnows supp expr tail `eplus` tryMP `eplus` tryExistence `eplus` tryForall
+        (result, tail) <- mapLeft (\(_, a) -> (lineNumber, a)) $ itsMe `eplus` mapLeft (undefined,) (whoKnows supp expr tail) `eplus` tryMP `eplus` tryExistence `eplus` tryForall
         let newMP = case expr of
                 Implication l r -> let list = fromMaybe [] $ lookup r mp in insert r (L.insert l list) mp
                 _ -> mp
-        {-trace (show (length stack) ++ ": Success") $-}
-        return (result, Assumption supp newMP : tail)
+        return (result, Assumption supp newMP (lineNumber + 1) : tail)
